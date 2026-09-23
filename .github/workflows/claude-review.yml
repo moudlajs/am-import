@@ -1,0 +1,86 @@
+name: Claude review
+
+on:
+  pull_request:
+    # Drafts are skipped (see the job `if`). ready_for_review is the event
+    # that matters: marking a draft ready is what asks for a review.
+    # synchronize re-reviews fixes pushed after that.
+    types: [opened, reopened, ready_for_review, synchronize]
+  issue_comment:
+    types: [created]
+
+# Cancel only for new pushes. Workflow-level concurrency is evaluated before
+# the job-level `if`, so without this guard any comment on the PR would
+# cancel a running review and then skip itself.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    # Skip drafts and Dependabot (it gets no secrets, so the run would only
+    # fail). For comments, fire only on an explicit @claude mention.
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.user.login != 'dependabot[bot]') ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # Minted with `claude setup-token` - the Claude subscription, not a
+          # metered API key.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Without these the review runs and then has no permission to post
+          # anything; the log says "No buffered inline comments".
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(go test:*),Bash(go vet:*),Bash(go build:*)"
+
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+
+            The PR branch is checked out in the working directory. You did not
+            write this code; review it as an independent reviewer.
+
+            Post findings as GitHub comments, not as a returned message, or
+            nobody will see them:
+              - `gh pr comment` for the overall summary
+              - `mcp__github_inline_comment__create_inline_comment` with
+                `confirmed: true` for a specific line
+
+            Read CLAUDE.md and CONTRIBUTING.md first; review against them.
+            Focus, in order:
+
+            1. Token leakage. AM_DEV_TOKEN / AM_USER_TOKEN values must never
+               reach logs, error messages, test fixtures that look real, or
+               committed files. Check every slog call and fmt.Errorf that
+               touches a request, header or config.
+            2. Correctness of the matching logic in internal/matcher:
+               normalisation, karaoke/tribute rejection, artist-before-title
+               preference, deterministic tie-breaking, and whether the tests
+               actually cover the edge cases they claim to.
+            3. Idiomatic Go and error handling: errors wrapped with %w,
+               sentinel errors checkable with errors.Is, context respected
+               end to end, no ignored errors, resources closed.
+            4. Over-engineering. This tool is deliberately small and
+               sequential. Flag interfaces with one implementation, goroutines,
+               config frameworks, new dependencies, or abstractions the task
+               did not ask for. Standard library only, except golang.org/x/text.
+            5. Tests: table-driven, no real network, t.Setenv not os.Setenv.
+
+            Be specific: file:line, a concrete failing scenario, a suggested
+            fix. If you find nothing significant, say so plainly rather than
+            padding. Do not approve or merge.
