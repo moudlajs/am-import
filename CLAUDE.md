@@ -22,7 +22,11 @@ idiomatic, boring Go, and explain non-obvious idioms in a short comment.
    pools, no CLI framework, no config framework, no interfaces with one
    implementation, no plugin systems. Standard library only in the binary,
    plus `golang.org/x/text` for diacritic folding.
-3. **No real network in tests.** `httptest.Server` for the client, `t.Setenv`
+3. **No attribution lines.** No `Co-Authored-By: Claude` trailer and no
+   "Generated with Claude Code" footer in commits (including PR-branch
+   commits: the squash merge copies their trailers into `main`), PR bodies,
+   or review comments. The review gate fails on a footer in its summary.
+4. **No real network in tests.** `httptest.Server` for the client, `t.Setenv`
    for env.
 
 ## Architecture
