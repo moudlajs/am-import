@@ -147,10 +147,16 @@ func printSummary(w io.Writer, matched int, unmatched []parser.Query, skipped in
 func writeUnmatched(input string, unmatched []parser.Query, log *slog.Logger) string {
 	path := filepath.Join(filepath.Dir(input), unmatchedFile)
 
-	if len(unmatched) == 0 {
-		if sameFile(path, input) {
-			return ""
+	// Never touch the input file: when the input is itself unmatched.txt
+	// (a report being re-fed), leave it exactly as the user wrote it.
+	if sameFile(path, input) {
+		if len(unmatched) > 0 {
+			log.Warn("not overwriting the input file with the report; the unmatched lines are in the summary", "path", path)
 		}
+		return ""
+	}
+
+	if len(unmatched) == 0 {
 		// A missing file is the normal case. Any other failure only leaves
 		// a leftover file behind, which must not cost the user the playlist.
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {

@@ -204,6 +204,28 @@ func TestRunReportWriteFailureIsNotFatal(t *testing.T) {
 	}
 }
 
+// Re-feeding an unmatched.txt that still has a bad line must not overwrite
+// (truncate) the input.
+func TestRunPartialNeverOverwritesInput(t *testing.T) {
+	f, api, _ := setup(t, "")
+	path := filepath.Join(t.TempDir(), unmatchedFile)
+	original := "# my notes\nPortishead - Glory Box\nNobody - Nothing\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger())
+	if !errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want errPartial", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != original {
+		t.Errorf("input was modified:\n%s", got)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+}
+
 // Re-feeding unmatched.txt after fixing it must not delete the input.
 func TestRunAllMatchedKeepsReportThatIsTheInput(t *testing.T) {
 	_, api, _ := setup(t, "")
