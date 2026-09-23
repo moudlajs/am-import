@@ -66,6 +66,27 @@ internal/applemusic     HTTP client: Search, CreatePlaylist, AddTracks
 | 2 | auth: tokens missing, expired or rejected |
 | 3 | input: bad flags, unreadable file, nothing to import |
 
+## Things that have already bitten
+
+- **A skipped required check counts as passing.** A push and `gh pr ready`
+  two seconds apart once let `review` go green with no review (#16). The
+  review workflow now skips a draft only when both the event payload and
+  the live API say draft; never move that back into the job-level `if`.
+  Dependabot PRs are the one deliberate skip (no secrets), gated by CI only.
+- **claude-code-action can exit green without reviewing.** It refuses to
+  run on a PR that changes its own workflow file, and says so only in an
+  annotation (#17). The last step of `claude-review.yml` fails the job
+  unless `claude[bot]` posted a `## Claude review of <head sha>` summary.
+- **PRs that change `claude-review.yml` cannot be reviewed by the action.**
+  Keep them to that file plus top-level `*.md` (the gate fails otherwise).
+  Before merging, run an independent review with a fresh subagent that did
+  not write the change, post it with `gh pr comment` with the first line
+  exactly `## Independent review (manual - <full head sha>)`, address it,
+  then re-run the `review` job. Any new push needs a new manual review.
+- **zsh heredocs expand `\uXXXX`.** Writing Go source through
+  `cat <<'EOF'` turned the `\uFEFF` escape into a literal BOM, which Go
+  rejects. Write Go files with an editor tool, not a heredoc.
+
 ## Commands
 
 ```sh
