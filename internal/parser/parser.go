@@ -38,8 +38,9 @@ func (q Query) Term() string {
 func Parse(r io.Reader) ([]Query, error) {
 	var queries []Query
 
-	// bufio.Scanner splits on "\n" and strips it; a trailing "\r" from CRLF
-	// files is removed by TrimSpace below.
+	// bufio.Scanner's default split function (ScanLines) strips both "\n"
+	// and a preceding "\r", so CRLF files need no special handling here.
+	// TrimSpace below only trims incidental whitespace around the content.
 	sc := bufio.NewScanner(r)
 	for n := 1; sc.Scan(); n++ {
 		line := sc.Text()
