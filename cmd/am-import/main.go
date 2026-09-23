@@ -133,7 +133,8 @@ func exitCode(err error) int {
 		return exitOK
 	case errors.Is(err, config.ErrMissingToken), errors.Is(err, applemusic.ErrUnauthorized):
 		return exitAuth
-	case errors.Is(err, errNoSongs), errors.Is(err, errNothingMatched), errors.As(err, &pathErr):
+	case errors.Is(err, errNoSongs), errors.Is(err, errNothingMatched), errors.As(err, &pathErr),
+		errors.Is(err, applemusic.ErrNotFound): // a -playlist-id that isn't in the library
 		// *fs.PathError: the input file could not be opened or read.
 		return exitInput
 	default:
@@ -149,6 +150,7 @@ var errFlagsReported = errors.New("invalid flags")
 type options struct {
 	name        string
 	storefront  string // empty means "use AM_STOREFRONT or its default"
+	playlistID  string // append here instead of creating a new playlist
 	dryRun      bool
 	delay       time.Duration // pause between search requests
 	verbose     bool
@@ -164,12 +166,13 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fset.SetOutput(stderr)
 	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
 	fset.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
+	fset.StringVar(&o.playlistID, "playlist-id", "", "append to this existing library playlist (e.g. p.AbC123) instead of creating one")
 	fset.BoolVar(&o.dryRun, "dry-run", false, "search and show matches, but create nothing")
 	fset.DurationVar(&o.delay, "delay", 500*time.Millisecond, "pause between search requests, e.g. 500ms or 2s")
 	fset.BoolVar(&o.verbose, "v", false, "verbose (debug) logging")
 	fset.BoolVar(&o.showVersion, "version", false, "print version and exit")
 	fset.Usage = func() {
-		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-delay 500ms] [-v] <file.txt>")
+		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-playlist-id ID] [-delay 500ms] [-v] <file.txt>")
 		fset.PrintDefaults()
 	}
 
@@ -190,8 +193,11 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if o.delay < 0 {
 		return o, errors.New("-delay must not be negative")
 	}
-	if o.name == "" && !o.dryRun {
-		return o, errors.New("-name is required (or use -dry-run)")
+	if o.name != "" && o.playlistID != "" {
+		return o, errors.New("use either -name (create a playlist) or -playlist-id (append to one), not both")
+	}
+	if o.name == "" && o.playlistID == "" && !o.dryRun {
+		return o, errors.New("-name or -playlist-id is required (or use -dry-run)")
 	}
 	return o, nil
 }

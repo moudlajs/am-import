@@ -99,8 +99,17 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 		return fmt.Errorf("%w (all lines listed in %s)", errNothingMatched, reportPath)
 	}
 
-	// Summary first, so the user sees what matched even if creating fails.
+	// Summary first, so the user sees what matched even if the write fails.
 	printSummary(stdout, len(ids), unmatched, skipped, reportPath)
+	if opts.playlistID != "" {
+		if err := api.AddTracks(ctx, opts.playlistID, ids); err != nil {
+			return fmt.Errorf("add to playlist %s: %w", opts.playlistID, err)
+		}
+		log.Info("added to playlist", "id", opts.playlistID, "tracks", len(ids))
+		fmt.Fprintf(stdout, "Added %d songs to playlist %s.\n", len(ids), opts.playlistID)
+		return partial(unmatched, reportPath)
+	}
+
 	id, err := api.CreatePlaylist(ctx, opts.name, ids)
 	if err != nil {
 		return fmt.Errorf("create playlist %q: %w", opts.name, err)

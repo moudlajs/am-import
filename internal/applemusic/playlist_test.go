@@ -93,6 +93,53 @@ func TestCreatePlaylistNoTracksEncodesEmptyArray(t *testing.T) {
 	assertJSONEqual(t, body, `{"attributes":{"name":"Empty"},"relationships":{"tracks":{"data":[]}}}`)
 }
 
+func TestAddTracksRequest(t *testing.T) {
+	var method, rawPath string
+	var body []byte
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		method, rawPath = r.Method, r.URL.EscapedPath()
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := c.AddTracks(context.Background(), "p.abc/../x", []string{"111", "222"}); err != nil {
+		t.Fatalf("AddTracks() error = %v", err)
+	}
+	if method != http.MethodPost {
+		t.Errorf("method = %s", method)
+	}
+	// The ID is path-escaped, so it can't walk to another endpoint.
+	if rawPath != "/v1/me/library/playlists/p.abc%2F..%2Fx/tracks" {
+		t.Errorf("path = %s", rawPath)
+	}
+	assertJSONEqual(t, body, `{"data":[{"id":"111","type":"songs"},{"id":"222","type":"songs"}]}`)
+}
+
+func TestAddTracksErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		wantErrIs error
+	}{
+		{"404", http.StatusNotFound, ErrNotFound},
+		{"401", http.StatusUnauthorized, ErrUnauthorized},
+		{"403", http.StatusForbidden, ErrUnauthorized},
+		{"429", http.StatusTooManyRequests, ErrRateLimited},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tt.status) })
+			err := c.AddTracks(context.Background(), "p.x", []string{"1"})
+			if !errors.Is(err, tt.wantErrIs) {
+				t.Fatalf("error = %v, want errors.Is %v", err, tt.wantErrIs)
+			}
+			if strings.Contains(err.Error(), testDevToken) || strings.Contains(err.Error(), testUserToken) {
+				t.Errorf("error leaks a token: %v", err)
+			}
+		})
+	}
+}
+
 func assertJSONEqual(t *testing.T, got []byte, want string) {
 	t.Helper()
 	var g, w any

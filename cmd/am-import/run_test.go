@@ -24,9 +24,11 @@ import (
 // fakeAPI is an httptest server that answers search by term and records
 // every playlist creation.
 type fakeAPI struct {
-	mu      sync.Mutex // the handler runs on the server's goroutines
-	posts   int
-	created []string // track IDs from the last create request
+	mu       sync.Mutex // the handler runs on the server's goroutines
+	posts    int
+	created  []string // track IDs from the last create request
+	appends  int
+	appended []string // track IDs from the last append request
 }
 
 // catalog maps a search term to the songs the fake returns for it.
@@ -50,6 +52,24 @@ func (f *fakeAPI) handler(w http.ResponseWriter, r *http.Request) {
 			}})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"results": map[string]any{"songs": map[string]any{"data": data}}})
+
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/tracks"):
+		if r.URL.Path != "/v1/me/library/playlists/p.existing/tracks" {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Data []struct{ ID string } `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.appends++
+		f.appended = nil
+		for _, d := range body.Data {
+			f.appended = append(f.appended, d.ID)
+		}
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/me/library/playlists":
 		var body struct {
@@ -344,6 +364,7 @@ func TestCLIFlags(t *testing.T) {
 		{"no file", []string{"-name", "x"}, exitInput, ""},
 		{"two files", []string{"-name", "x", "a.txt", "b.txt"}, exitInput, ""},
 		{"no name without dry-run", []string{"a.txt"}, exitInput, ""},
+		{"name and playlist-id", []string{"-name", "x", "-playlist-id", "p.1", "a.txt"}, exitInput, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -450,6 +471,8 @@ func TestCLIExitCodes(t *testing.T) {
 		wantStderr string
 	}{
 		{"all matched", ok, "Portishead - Glory Box\n", false, []string{"-name", "x", "input.txt"}, exitOK, ""},
+		{"append", ok, "Portishead - Glory Box\n", false, []string{"-playlist-id", "p.existing", "input.txt"}, exitOK, ""},
+		{"append to unknown playlist", ok, "Portishead - Glory Box\n", false, []string{"-playlist-id", "p.nope", "input.txt"}, exitInput, "not found"},
 		{"partial", ok, "Portishead - Glory Box\nNobody - Nothing\n", false, []string{"-name", "x", "input.txt"}, exitError, "unmatched.txt"},
 		{"missing token", ok, "Portishead - Glory Box\n", true, []string{"-name", "x", "input.txt"}, exitAuth, "AM_DEV_TOKEN is not set"},
 		{"401", status(http.StatusUnauthorized), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitAuth, "DevTools"},
@@ -572,5 +595,26 @@ func TestCLIInterrupted(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "no playlist was created") {
 		t.Errorf("stderr = %q, want the interrupted message", errOut.String())
+	}
+}
+
+func TestRunAppendsInsteadOfCreating(t *testing.T) {
+	f, api, path := setup(t, input)
+	var out bytes.Buffer
+
+	err := run(context.Background(), options{playlistID: "p.existing", file: path}, api, &out, discardLogger())
+	if !errors.Is(err, errPartial) { // "Nobody - Nothing" has no match
+		t.Fatalf("run() error = %v, want errPartial", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.posts != 0 {
+		t.Errorf("created %d playlists, want 0", f.posts)
+	}
+	if f.appends != 1 || strings.Join(f.appended, ",") != "b1,p1" {
+		t.Errorf("appends = %d with %v, want 1 with [b1 p1]", f.appends, f.appended)
+	}
+	if !strings.Contains(out.String(), "Added 2 songs to playlist p.existing") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }

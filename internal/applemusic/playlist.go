@@ -3,6 +3,7 @@ package applemusic
 import (
 	"context"
 	"errors"
+	"net/url"
 )
 
 // trackRef is how the API refers to a catalog song in a playlist body.
@@ -43,6 +44,18 @@ func (c *Client) CreatePlaylist(ctx context.Context, name string, songIDs []stri
 		return "", errors.New("POST /v1/me/library/playlists: response has no playlist ID")
 	}
 	return resp.Data[0].ID, nil
+}
+
+type addTracksRequest struct {
+	Data []trackRef `json:"data"`
+}
+
+// AddTracks appends songIDs, in order, to the existing library playlist
+// playlistID. A playlist ID that isn't in the library is ErrNotFound.
+func (c *Client) AddTracks(ctx context.Context, playlistID string, songIDs []string) error {
+	// PathEscape: the ID is user input and becomes part of the URL path.
+	path := "/v1/me/library/playlists/" + url.PathEscape(playlistID) + "/tracks"
+	return c.do(ctx, "POST", path, nil, addTracksRequest{Data: trackRefs(songIDs)}, nil)
 }
 
 // trackRefs turns song IDs into the {"id", "type": "songs"} objects the
