@@ -1,0 +1,28 @@
+version: 2
+
+project_name: am-import
+
+builds:
+  - main: ./cmd/am-import
+    binary: am-import
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md, LICENSE, .env.example]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  # GitHub's auto-generated release notes, built from merged PR titles.
+  use: github-native
+
+release:
+  draft: false

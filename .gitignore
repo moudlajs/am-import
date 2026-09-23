@@ -1,0 +1,19 @@
+# Tokens. Never commit a real .env - it holds your Apple Music session.
+.env
+
+# Build output
+/bin/
+/dist/
+/am-import
+*.exe
+*.test
+*.out
+coverage.out
+
+# Written next to the input file at runtime
+unmatched.txt
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
