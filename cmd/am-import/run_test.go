@@ -182,6 +182,28 @@ func TestRunStaleReportRemovalFailureIsNotFatal(t *testing.T) {
 	}
 }
 
+// Same for a partial run whose report can't be written: the matched songs
+// still become a playlist, and the unmatched lines are in the summary.
+func TestRunReportWriteFailureIsNotFatal(t *testing.T) {
+	f, api, path := setup(t, input)
+	blocker := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+
+	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
+	if !errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want errPartial", err)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+	if !strings.Contains(out.String(), "line 4: Nobody - Nothing") {
+		t.Errorf("summary missing the unmatched line:\n%s", out.String())
+	}
+}
+
 // Re-feeding unmatched.txt after fixing it must not delete the input.
 func TestRunAllMatchedKeepsReportThatIsTheInput(t *testing.T) {
 	_, api, _ := setup(t, "")
