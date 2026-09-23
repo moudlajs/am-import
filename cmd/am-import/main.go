@@ -22,6 +22,9 @@ import (
 var version = "dev"
 
 // Exit codes. See the table in README.md and CLAUDE.md.
+//
+// TODO(#7): add exitAuth (2) and map config.ErrMissingToken and
+// applemusic.ErrUnauthorized to it with errors.Is. Until then both exit 1.
 const (
 	exitOK    = 0
 	exitError = 1

@@ -111,6 +111,8 @@ func TestRunDryRunCreatesNothing(t *testing.T) {
 	}
 }
 
+// TODO(#9): one line is unmatched here; once #9 lands, run must report
+// that (exit 1) rather than return nil.
 func TestRunCreatesPlaylistOnce(t *testing.T) {
 	f, api, path := setup(t, input)
 	var out bytes.Buffer

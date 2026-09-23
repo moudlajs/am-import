@@ -66,6 +66,8 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 	if err != nil {
 		return fmt.Errorf("create playlist %q: %w", opts.name, err)
 	}
+	// TODO(#9): write unmatched.txt and return an error that exits 1 when
+	// some lines did not match. Until then a partial match exits 0.
 	log.Info("created playlist", "name", opts.name, "id", id, "tracks", len(ids))
 	fmt.Fprintf(stdout, "Created %q with %d of %d songs.\n", opts.name, len(ids), len(results))
 	return nil
