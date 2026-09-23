@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,17 +22,26 @@ import (
 // It must be a package-level var (not a const) for -X to work.
 var version = "dev"
 
-// Exit codes. See the table in README.md and CLAUDE.md.
-//
-// TODO(#7): map every error class with errors.Is: exitAuth (2) for
-// config.ErrMissingToken and applemusic.ErrUnauthorized, and exitInput (3)
-// for an unreadable or empty input file and errNothingMatched. Until then
-// every run() error exits 1, and a test should pin cli()'s codes.
+// Exit codes. See the table in README.md and CLAUDE.md; exitCode maps
+// errors onto them.
 const (
 	exitOK    = 0
-	exitError = 1
+	exitError = 1 // also "partial": some lines unmatched
+	exitAuth  = 2
 	exitInput = 3
 )
+
+// authHelp is printed when Apple rejects the tokens. It names the steps,
+// never the token values.
+const authHelp = `Apple Music rejected your web-player tokens; they have probably expired.
+Refresh them:
+  1. Open https://music.apple.com in a browser and sign in.
+  2. Open DevTools (Cmd+Opt+I) > Network, filter on "amp-api", click around.
+  3. From any amp-api request's Request Headers copy
+       authorization (without "Bearer ")  -> AM_DEV_TOKEN
+       media-user-token                   -> AM_USER_TOKEN
+     into .env or your shell.
+See "Token setup" in the README.`
 
 func main() {
 	// os.Exit skips deferred calls, so all the work happens in cli(), whose
@@ -72,8 +82,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL s
 	}
 	cfg, err := config.FromEnv()
 	if err != nil {
-		fmt.Fprintf(stderr, "am-import: %v\n", err)
-		return exitError
+		return report(stderr, err)
 	}
 	if opts.storefront == "" {
 		opts.storefront = cfg.Storefront
@@ -83,10 +92,40 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL s
 	api := applemusic.New(httpClient, baseURL, cfg.DevToken, cfg.UserToken)
 
 	if err := run(ctx, opts, api, stdout, logger); err != nil {
-		fmt.Fprintf(stderr, "am-import: %v\n", err)
-		return exitError
+		return report(stderr, err)
 	}
 	return exitOK
+}
+
+// report prints err, plus advice for the errors a user can act on, and
+// returns the matching exit code.
+func report(stderr io.Writer, err error) int {
+	fmt.Fprintf(stderr, "am-import: %v\n", err)
+	code := exitCode(err)
+	switch {
+	case errors.Is(err, applemusic.ErrUnauthorized):
+		fmt.Fprintln(stderr, authHelp)
+	case errors.Is(err, applemusic.ErrRateLimited):
+		fmt.Fprintln(stderr, "Apple Music is rate limiting requests. Wait a minute and run again.")
+	}
+	return code
+}
+
+// exitCode maps an error from config or run onto an exit code.
+// errors.Is and errors.As look through every %w wrapping layer.
+func exitCode(err error) int {
+	var pathErr *fs.PathError
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, config.ErrMissingToken), errors.Is(err, applemusic.ErrUnauthorized):
+		return exitAuth
+	case errors.Is(err, errNoSongs), errors.Is(err, errNothingMatched), errors.As(err, &pathErr):
+		// *fs.PathError: the input file could not be opened or read.
+		return exitInput
+	default:
+		return exitError
+	}
 }
 
 // errFlagsReported means flag parsing failed and the flag package has

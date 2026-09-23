@@ -18,6 +18,9 @@ import (
 // nothing to put in a playlist.
 var errNothingMatched = errors.New("no line matched a song; nothing to import")
 
+// errNoSongs means the input file had no song lines at all.
+var errNoSongs = errors.New("no songs found (only blank lines or comments?)")
+
 // resolved pairs an input line with its chosen song. ok is false when no
 // search result was acceptable.
 type resolved struct {
@@ -85,7 +88,7 @@ func readQueries(path string) ([]parser.Query, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if len(queries) == 0 {
-		return nil, fmt.Errorf("%s: no songs found (only blank lines or comments?)", path)
+		return nil, fmt.Errorf("%s: %w", path, errNoSongs)
 	}
 	return queries, nil
 }
