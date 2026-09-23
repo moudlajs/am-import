@@ -1,8 +1,11 @@
 package applemusic
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -157,5 +160,23 @@ func TestSearchCancelledContext(t *testing.T) {
 	}
 	if called.Load() {
 		t.Error("server was called despite a cancelled context")
+	}
+}
+
+func TestClientNeverPrintsTokens(t *testing.T) {
+	c := New(http.DefaultClient, "https://example.test", testDevToken, testUserToken)
+
+	var logBuf bytes.Buffer
+	slog.New(slog.NewTextHandler(&logBuf, nil)).Info("client", "c", c)
+
+	for name, out := range map[string]string{
+		"%v":   fmt.Sprintf("%v", c),
+		"%+v":  fmt.Sprintf("%+v", c),
+		"%#v":  fmt.Sprintf("%#v", c),
+		"slog": logBuf.String(),
+	} {
+		if strings.Contains(out, testDevToken) || strings.Contains(out, testUserToken) {
+			t.Errorf("%s leaks a token: %s", name, out)
+		}
 	}
 }

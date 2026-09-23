@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 )
@@ -47,6 +48,20 @@ func New(httpClient *http.Client, baseURL, devToken, userToken string) *Client {
 		devToken:  devToken,
 		userToken: userToken,
 	}
+}
+
+// String keeps the tokens out of %v, %+v and %s. fmt prints unexported
+// fields too, so without this a stray Printf would leak them.
+func (c *Client) String() string {
+	return fmt.Sprintf("applemusic.Client{baseURL:%s tokens:<redacted>}", c.baseURL)
+}
+
+// GoString covers %#v, which bypasses String.
+func (c *Client) GoString() string { return c.String() }
+
+// LogValue implements slog.LogValuer, so slog.Any("client", c) is safe.
+func (c *Client) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("base_url", c.baseURL), slog.String("tokens", "<redacted>"))
 }
 
 // do sends one request and decodes a JSON response into out (if out is not
