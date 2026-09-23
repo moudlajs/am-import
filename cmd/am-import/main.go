@@ -31,17 +31,17 @@ const (
 	exitInput = 3
 )
 
-// authHelp is printed when Apple rejects the tokens. It names the steps,
-// never the token values.
-const authHelp = `Apple Music rejected your web-player tokens; they have probably expired.
+// authHelp is printed when Apple rejects the tokens. It names the steps and
+// the variables, never the token values.
+var authHelp = fmt.Sprintf(`Apple Music rejected your web-player tokens; they have probably expired.
 Refresh them:
   1. Open https://music.apple.com in a browser and sign in.
   2. Open DevTools (Cmd+Opt+I) > Network, filter on "amp-api", click around.
   3. From any amp-api request's Request Headers copy
-       authorization (without "Bearer ")  -> AM_DEV_TOKEN
-       media-user-token                   -> AM_USER_TOKEN
+       authorization (without "Bearer ")  -> %s
+       media-user-token                   -> %s
      into .env or your shell.
-See "Token setup" in the README.`
+See "Token setup" in the README.`, config.EnvDevToken, config.EnvUserToken)
 
 func main() {
 	// os.Exit skips deferred calls, so all the work happens in cli(), whose
