@@ -83,6 +83,7 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 		if err := printTable(stdout, results); err != nil {
 			return err
 		}
+		fmt.Fprintln(stdout)
 		printSummary(stdout, len(ids), unmatched, skipped, "")
 		return partial(unmatched, "")
 	}

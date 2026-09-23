@@ -1,6 +1,7 @@
 # am-import
 
 [![CI](https://github.com/moudlajs/am-import/actions/workflows/ci.yml/badge.svg)](https://github.com/moudlajs/am-import/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/moudlajs/am-import)](https://github.com/moudlajs/am-import/releases)
 
 Turn a plain text file of songs into an Apple Music library playlist.
 
@@ -9,14 +10,17 @@ Turn a plain text file of songs into an Apple Music library playlist.
 Björk - Army of Me
 Portishead - Glory Box
 Massive Attack - Teardrop
+Sigur Ros - Hoppipolla
 ```
 
 ```sh
 am-import -name "Road trip" "road trip.txt"
 ```
 
-> **Status:** under construction. Tracked in the
-> [M1 — MVP milestone](https://github.com/moudlajs/am-import/milestones).
+It searches the Apple Music catalog for each line, picks the best match (the
+original recording, not the karaoke or tribute version), and creates the
+playlist in one request. Lines it can't match go to `unmatched.txt` so you can
+fix them and run again.
 
 ## Why no Apple Developer account?
 
@@ -29,39 +33,62 @@ tokens; the tool never logs in, scrapes or obtains them itself.
 ## Disclaimer
 
 - These are **undocumented, private endpoints**. Apple can change or remove
-  them at any time and this tool will break when they do.
+  them at any time, and this tool will break when they do.
 - It is meant for **personal use with your own account**. Don't use it to
-  automate anyone else's library, and don't hammer the API. Searches are
-  deliberately sequential and rate-limited.
+  automate anyone else's library, and don't hammer the API: searches are
+  deliberately sequential with a pause between them.
 - Not affiliated with or endorsed by Apple.
 
 ## Install
+
+With Go 1.24 or newer:
 
 ```sh
 go install github.com/moudlajs/am-import/cmd/am-import@latest
 ```
 
-Or download a binary for macOS or Linux from
-[Releases](https://github.com/moudlajs/am-import/releases) and check it
-against `checksums.txt`.
+Or download a binary for macOS or Linux (amd64/arm64) from
+[Releases](https://github.com/moudlajs/am-import/releases), and check it
+against `checksums.txt`:
+
+```sh
+shasum -a 256 -c checksums.txt --ignore-missing
+tar -xzf am-import_*_darwin_arm64.tar.gz
+./am-import -version
+```
 
 ## Token setup
 
+You need two values from the web player. Both go in environment variables.
+
 1. Open <https://music.apple.com> and sign in.
-2. Open DevTools (<kbd>Cmd</kbd>+<kbd>Opt</kbd>+<kbd>I</kbd>) → **Network** tab.
+2. Open DevTools (<kbd>Cmd</kbd>+<kbd>Opt</kbd>+<kbd>I</kbd>, or
+   <kbd>F12</kbd>) and select the **Network** tab.
 3. Type `amp-api` in the filter box, then click around (open your Library) so
    requests to `amp-api.music.apple.com` appear.
-4. Click one of them → **Headers** → **Request Headers** and copy:
-   - `authorization` → `AM_DEV_TOKEN` (drop the `Bearer ` prefix)
-   - `media-user-token` → `AM_USER_TOKEN`
-5. `cp .env.example .env` and paste them in, or export them in your shell
-   (shell variables win over `.env`).
+4. Click one of them, then **Headers → Request Headers**, and copy:
 
-`.env` is gitignored. The tokens grant access to your Apple Music library, so
-treat them like a password. `am-import` never prints them.
+   | Request header | Variable | Notes |
+   |---|---|---|
+   | `authorization` | `AM_DEV_TOKEN` | Drop the `Bearer ` prefix (it's accepted either way). Lasts months. |
+   | `media-user-token` | `AM_USER_TOKEN` | Tied to your session. This is the one that expires. |
 
-When the tool exits with code 2, your user token has expired. Repeat the steps
-above.
+5. Put them in a `.env` file in the directory you run `am-import` from:
+
+   ```sh
+   cp .env.example .env   # then paste the two values in
+   ```
+
+   or export them in your shell. Shell variables win over `.env`.
+
+`AM_STOREFRONT` (optional) sets your country's catalog, e.g. `cz`, `us`, `gb`.
+It defaults to `us`; `-storefront` overrides it.
+
+The tokens give access to your Apple Music library, so treat them like a
+password. `.env` is gitignored, and `am-import` never prints or logs them.
+
+**When `am-import` exits with code 2**, Apple rejected the tokens. Repeat the
+steps above; usually only `AM_USER_TOKEN` needs replacing.
 
 ## Usage
 
@@ -69,10 +96,88 @@ above.
 am-import -name "Playlist name" [-storefront cz] [-dry-run] [-playlist-id ID] [-delay 500ms] [-v] <file.txt>
 ```
 
-Input format: one `Artist - Title` per line. Blank lines and lines starting
-with `#` are ignored. A line without ` - ` is searched as-is.
+| Flag | Meaning |
+|---|---|
+| `-name` | Name of the playlist to create. |
+| `-playlist-id` | Append to this existing library playlist instead of creating one. Use either this or `-name`. |
+| `-dry-run` | Search and show the matches, create nothing. |
+| `-storefront` | Catalog country, e.g. `cz`. Default `$AM_STOREFRONT`, else `us`. |
+| `-delay` | Pause between searches. Default `500ms`. Raise it if you hit rate limits. |
+| `-v` | Debug logging on stderr. |
+| `-version` | Print the version. |
 
-Full usage and exit codes will be documented here once implemented.
+### Input format
+
+One song per line, `Artist - Title`:
+
+- Only the **first** ` - ` (with spaces) splits, so `Queen - Bohemian Rhapsody - Remastered` works, and so does `Jay-Z - 99 Problems`.
+- A line without ` - ` is searched as-is.
+- Blank lines and lines starting with `#` are ignored.
+- UTF-8, with or without a BOM, and LF or CRLF line endings.
+
+Matching ignores case, accents and punctuation (`Bjork` finds `Björk`,
+`Sigur Ros` finds `Sigur Rós`). It rejects karaoke, tribute, "made famous by"
+and "in the style of" results unless your line asks for them, and requires both
+the artist and the title to match.
+
+### Examples
+
+Check the matches first:
+
+```console
+$ am-import -dry-run roadtrip.txt
+LINE  QUERY                              MATCH                      ID
+2     Björk - Army of Me                 Björk - Army of Me         1440833098
+3     Portishead - Glory Box             Portishead - Glory Box     1440764786
+4     Massive Attack - Teardrop          Massive Attack - Teardrop  1440799025
+5     Sigur Ros - Hoppipolla             Sigur Rós - Hoppípolla     1443163367
+6     The Nonexistents - Imaginary Song  (no match)                 -
+
+Matched 4, unmatched 1, skipped 1 (blank or comment).
+Unmatched:
+  line 6: The Nonexistents - Imaginary Song
+```
+
+Create the playlist:
+
+```console
+$ am-import -name "Road trip" roadtrip.txt
+Matched 4, unmatched 1, skipped 1 (blank or comment).
+Unmatched:
+  line 6: The Nonexistents - Imaginary Song
+Written to unmatched.txt - fix the lines and feed it back in.
+Created "Road trip" with 4 songs.
+```
+
+Fix the lines in `unmatched.txt` and add them to the same playlist. The ID is
+the last part of the playlist's URL in the web player,
+`music.apple.com/library/playlist/p.XXXXXXX`:
+
+```sh
+am-import -playlist-id p.XXXXXXX unmatched.txt
+```
+
+Slow down, and see every search and match:
+
+```sh
+am-import -v -delay 2s -name "Big list" big.txt
+```
+
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> at any point to stop. Nothing is created
+or changed on a cancelled run.
+
+## Exit codes
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 0 | Every line matched; the playlist was created or updated. | Nothing. |
+| 1 | Partial: some lines didn't match (listed in the summary and in `unmatched.txt`). Also used for other failures: rate limiting, server or network errors, Ctrl+C. | Fix `unmatched.txt` and re-run with `-playlist-id`, or read the error. |
+| 2 | Auth: a token is missing, expired or rejected. | Refresh the tokens (see [Token setup](#token-setup)). |
+| 3 | Input: bad flags, a missing or empty file, nothing matched at all, or a `-playlist-id` that isn't in your library. | Check the command and the file. |
+
+`unmatched.txt` is written next to the input file. It is never written in
+`-dry-run`, and a run that matches everything removes a stale one. If the input
+itself is `unmatched.txt`, it is never overwritten or removed.
 
 ## Development
 

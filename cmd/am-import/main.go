@@ -164,7 +164,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	// calling os.Exit(2), which would collide with our auth exit code.
 	fset := flag.NewFlagSet("am-import", flag.ContinueOnError)
 	fset.SetOutput(stderr)
-	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
+	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -playlist-id or -dry-run)")
 	fset.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
 	fset.StringVar(&o.playlistID, "playlist-id", "", "append to this existing library playlist (e.g. p.AbC123) instead of creating one")
 	fset.BoolVar(&o.dryRun, "dry-run", false, "search and show matches, but create nothing")
