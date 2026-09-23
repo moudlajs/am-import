@@ -39,6 +39,16 @@ func TestParse(t *testing.T) {
 			want:  []Query{{Title: "teardrop massive attack", Raw: "teardrop massive attack", Line: 1}},
 		},
 		{
+			// TrimSpace runs before Cut, so a leading or trailing " - " loses its
+			// outer space and is no longer a separator: Artist stays empty.
+			name:  "separator at the edges is not a split",
+			input: " - Title\nArtist - \n",
+			want: []Query{
+				{Title: "- Title", Raw: "- Title", Line: 1},
+				{Title: "Artist -", Raw: "Artist -", Line: 2},
+			},
+		},
+		{
 			name:  "trailing whitespace and CRLF",
 			input: "Björk - Army of Me  \t\r\nSigur Rós - Hoppípolla\r\n",
 			want: []Query{
