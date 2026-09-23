@@ -204,6 +204,37 @@ func TestRunReportWriteFailureIsNotFatal(t *testing.T) {
 	}
 }
 
+// A create that fails after a partial match still shows the summary and
+// leaves the report on disk.
+func TestRunCreateFailureStillSummarises(t *testing.T) {
+	f := &fakeAPI{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		f.handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	api := applemusic.New(srv.Client(), srv.URL, "fake-dev", "fake-user")
+	path := filepath.Join(t.TempDir(), "songs.txt")
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+
+	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
+	if err == nil || errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want the create failure", err)
+	}
+	if !strings.Contains(out.String(), "Matched 2, unmatched 1") {
+		t.Errorf("summary missing:\n%s", out.String())
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(path), unmatchedFile)); statErr != nil {
+		t.Errorf("report not on disk: %v", statErr)
+	}
+}
+
 // Re-feeding an unmatched.txt that still has a bad line must not overwrite
 // (truncate) the input.
 func TestRunPartialNeverOverwritesInput(t *testing.T) {

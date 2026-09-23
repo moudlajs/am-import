@@ -99,13 +99,14 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 		return fmt.Errorf("%w (all lines listed in %s)", errNothingMatched, reportPath)
 	}
 
+	// Summary first, so the user sees what matched even if creating fails.
+	printSummary(stdout, len(ids), unmatched, skipped, reportPath)
 	id, err := api.CreatePlaylist(ctx, opts.name, ids)
 	if err != nil {
 		return fmt.Errorf("create playlist %q: %w", opts.name, err)
 	}
 	log.Info("created playlist", "name", opts.name, "id", id, "tracks", len(ids))
 	fmt.Fprintf(stdout, "Created %q with %d songs.\n", opts.name, len(ids))
-	printSummary(stdout, len(ids), unmatched, skipped, reportPath)
 	return partial(unmatched, reportPath)
 }
 
@@ -123,7 +124,7 @@ func partial(unmatched []parser.Query, reportPath string) error {
 }
 
 func printSummary(w io.Writer, matched int, unmatched []parser.Query, skipped int, reportPath string) {
-	fmt.Fprintf(w, "\nMatched %d, unmatched %d, skipped %d (blank or comment).\n", matched, len(unmatched), skipped)
+	fmt.Fprintf(w, "Matched %d, unmatched %d, skipped %d (blank or comment).\n", matched, len(unmatched), skipped)
 	if len(unmatched) == 0 {
 		return
 	}
