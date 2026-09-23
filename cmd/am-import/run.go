@@ -87,15 +87,15 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 		return partial(unmatched, "")
 	}
 
-	if len(ids) == 0 {
-		return errNothingMatched
-	}
-
 	// Write the report before creating the playlist, so it exists even if
-	// the create call fails and the user wants to fix lines and retry.
-	reportPath, err := writeUnmatched(opts.file, unmatched)
+	// the create call fails, or nothing matched at all, and the user wants
+	// to fix lines and retry.
+	reportPath, err := writeUnmatched(opts.file, unmatched, log)
 	if err != nil {
 		return err
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("%w (all lines listed in %s)", errNothingMatched, reportPath)
 	}
 
 	id, err := api.CreatePlaylist(ctx, opts.name, ids)
@@ -139,16 +139,17 @@ func printSummary(w io.Writer, matched int, unmatched []parser.Query, skipped in
 // to the input, so the file can be edited and used as input again. With
 // nothing unmatched it removes a stale report from an earlier run, unless
 // that report is the input itself. It returns the path written, or "".
-func writeUnmatched(input string, unmatched []parser.Query) (string, error) {
+func writeUnmatched(input string, unmatched []parser.Query, log *slog.Logger) (string, error) {
 	path := filepath.Join(filepath.Dir(input), unmatchedFile)
 
 	if len(unmatched) == 0 {
 		if sameFile(path, input) {
 			return "", nil
 		}
-		// A missing file is the normal case, not an error.
+		// A missing file is the normal case. Any other failure only leaves
+		// a leftover file behind, which must not cost the user the playlist.
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("remove stale %s: %w", path, err)
+			log.Warn("could not remove stale report", "path", path, "error", err)
 		}
 		return "", nil
 	}

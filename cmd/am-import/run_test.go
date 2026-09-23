@@ -165,6 +165,23 @@ func TestRunAllMatchedRemovesStaleReport(t *testing.T) {
 	}
 }
 
+// A leftover report that can't be removed (here: a non-empty directory
+// with that name) must not stop the playlist being created.
+func TestRunStaleReportRemovalFailureIsNotFatal(t *testing.T) {
+	f, api, path := setup(t, "Portishead - Glory Box\n")
+	blocker := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger()); err != nil {
+		t.Fatalf("run() error = %v, want nil", err)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+}
+
 // Re-feeding unmatched.txt after fixing it must not delete the input.
 func TestRunAllMatchedKeepsReportThatIsTheInput(t *testing.T) {
 	_, api, _ := setup(t, "")
