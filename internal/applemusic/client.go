@@ -28,6 +28,9 @@ var (
 	ErrUnauthorized = errors.New("unauthorized: the Apple Music web-player tokens were rejected")
 	// ErrRateLimited means the API returned 429.
 	ErrRateLimited = errors.New("rate limited by Apple Music")
+	// ErrNotFound means the API returned 404, e.g. for a playlist ID that
+	// is not in the user's library.
+	ErrNotFound = errors.New("not found")
 )
 
 // Client calls the Apple Music API. It is safe to reuse; it holds no
@@ -112,6 +115,8 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("%s %s: status %d: %w", method, path, resp.StatusCode, ErrUnauthorized)
 	case resp.StatusCode == http.StatusTooManyRequests:
 		return fmt.Errorf("%s %s: %w", method, path, ErrRateLimited)
+	case resp.StatusCode == http.StatusNotFound:
+		return fmt.Errorf("%s %s: %w", method, path, ErrNotFound)
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return fmt.Errorf("%s %s: unexpected status %d", method, path, resp.StatusCode)
 	}
