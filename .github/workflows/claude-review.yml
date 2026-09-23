@@ -1,5 +1,9 @@
 name: Claude review
 
+# `review` is a required check, so a green result must mean a review
+# happened. Every step below exists because of a way it once went green
+# without one - see "Things that have already bitten" in CLAUDE.md.
+
 on:
   pull_request:
     # Drafts get a no-op run (see the first step). ready_for_review is the
@@ -9,11 +13,12 @@ on:
   issue_comment:
     types: [created]
 
-# Cancel only for new pushes. Workflow-level concurrency is evaluated before
-# the job-level `if`, so without this guard any comment on the PR would
-# cancel a running review and then skip itself.
+# One group per event type. A group holds a single pending run and a new
+# one replaces it regardless of cancel-in-progress, so if comments shared
+# the PR group, any comment (including Claude's own summary) could replace
+# a queued review and leave `review` cancelled.
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: claude-review-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -24,14 +29,13 @@ permissions:
 
 jobs:
   review:
-    # Dependabot gets no secrets, so a run would only fail. For comments,
-    # fire only on an explicit @claude mention on a pull request.
+    # Dependabot PRs are skipped, deliberately: Dependabot gets no secrets,
+    # so a run could only fail. A skipped required check passes, so those
+    # PRs are gated by CI alone. For comments, fire only on an explicit
+    # @claude mention on a pull request.
     #
-    # Draft state is deliberately NOT checked here: the event payload is a
-    # snapshot. A push landing just before `gh pr ready` produces a run
-    # that still says draft, skips, and cancels the real review, and a
-    # skipped required check counts as passing (#16). It is checked live
-    # in the first step instead.
+    # Draft state is deliberately NOT decided here from the payload alone;
+    # see the first step.
     if: |
       (github.event_name == 'pull_request' &&
        github.event.pull_request.user.login != 'dependabot[bot]') ||
@@ -39,15 +43,27 @@ jobs:
        github.event.issue.pull_request &&
        contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Explicit `shell: bash` adds -o pipefail, so a failing `gh api` in
+        # a pipeline fails the step instead of producing an empty count.
+        shell: bash
     steps:
-      - name: Skip drafts (checked live, not from the event payload)
+      # The payload is a snapshot: a push landing just before `gh pr ready`
+      # produces a run whose payload still says draft, and that run cancels
+      # the ready one (#16). The live API can lag the other way. So skip
+      # only when BOTH say draft; a ready_for_review payload never does.
+      - name: Skip drafts
         id: draft
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PAYLOAD_DRAFT: ${{ github.event.pull_request.draft || false }}
         run: |
-          draft="$(gh pr view "$PR" --repo "$REPO" --json isDraft --jq .isDraft)"
+          live="$(gh pr view "$PR" --repo "$REPO" --json isDraft --jq .isDraft)"
+          draft=false
+          if [ "$PAYLOAD_DRAFT" = "true" ] && [ "$live" = "true" ]; then draft=true; fi
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
           echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           if [ "$draft" = "true" ]; then
@@ -80,9 +96,16 @@ jobs:
 
             Post findings as GitHub comments, not as a returned message, or
             nobody will see them:
-              - `gh pr comment` for the overall summary
               - `mcp__github_inline_comment__create_inline_comment` with
                 `confirmed: true` for a specific line
+              - `gh pr comment` for the overall summary. You MUST post this
+                summary, and only once you have actually completed the
+                review. Its first line MUST be exactly:
+                  ## Claude review
+                A workflow step checks for that heading; without it the
+                review counts as not done. If you could not review (missing
+                files, tool errors), post a comment WITHOUT that heading
+                explaining why.
 
             Read CLAUDE.md and CONTRIBUTING.md first; review against them.
             Focus, in order:
@@ -109,9 +132,9 @@ jobs:
             padding. Do not approve or merge.
 
       # The action exits green without reviewing in some cases, notably when
-      # the PR changes this workflow file (it refuses to run a workflow that
-      # differs from main's). A green `review` must mean a review happened,
-      # so require a comment from claude[bot] posted during this run.
+      # the PR changes this workflow file: it refuses to run a workflow that
+      # differs from the default branch's (#17). So require the summary it
+      # was told to post, from claude[bot], during this run.
       - name: Verify a review was actually posted
         if: steps.draft.outputs.draft != 'true' && github.event_name == 'pull_request'
         env:
@@ -119,17 +142,41 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           STARTED: ${{ steps.draft.outputs.started }}
-          BASE: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          n="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                --jq "[.[] | select(.user.login == \"claude[bot]\" and .created_at >= \"$STARTED\")] | length" \
-              | awk '{s+=$1} END {print s+0}')"
-          if [ "$n" -gt 0 ]; then echo "ok - review posted"; exit 0; fi
+          count() {  # count PR comments whose author and first line match
+            gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              --jq "[.[] | select(.user.login == \"$1\" and .created_at >= \"$2\" and (.body | startswith(\"$3\")))] | length" \
+              | awk '{s+=$1} END {print s+0}'
+          }
 
-          if ! git diff --quiet "origin/$BASE" HEAD -- .github/workflows/claude-review.yml; then
-            echo "::warning::This PR changes claude-review.yml, which claude-code-action refuses to run on. It needs an independent review posted by hand before merging - see CLAUDE.md."
-            exit 0
+          if [ "$(count 'claude[bot]' "$STARTED" '## Claude review')" -gt 0 ]; then
+            echo "ok - review posted"; exit 0
           fi
 
-          echo "::error::No review comment from claude[bot] since $STARTED. The action ran but did not review; check its log."
-          exit 1
+          wf=.github/workflows/claude-review.yml
+          if git diff --quiet "origin/$DEFAULT_BRANCH" HEAD -- "$wf"; then
+            echo "::error::No '## Claude review' comment from claude[bot] since $STARTED. The action did not complete a review; check its log."
+            exit 1
+          fi
+
+          # This PR changes the review workflow, so the action cannot review
+          # it. Allowed only if the PR is limited to workflows and docs, and
+          # a manual independent review has been posted (CLAUDE.md).
+          other="$(git diff --name-only "origin/$DEFAULT_BRANCH" HEAD \
+                    | grep -vE '^\.github/workflows/[^/]+\.ya?ml$|\.md$' || true)"
+          if [ -n "$other" ]; then
+            echo "::error::This PR changes $wf, which the action cannot review, AND other files it must review:"
+            echo "$other"
+            echo "Split the workflow change into its own PR."
+            exit 1
+          fi
+          # The manual review must be newer than the head commit, so a review
+          # of an earlier version does not cover later pushes.
+          head_time="$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd "$HEAD_SHA")"
+          if [ "$(count 'moudlajs' "$head_time" '## Independent review (manual')" -eq 0 ]; then
+            echo "::error::This PR changes $wf, which the action cannot review. Post an independent review of $HEAD_SHA (heading '## Independent review (manual') per CLAUDE.md, then re-run this job."
+            exit 1
+          fi
+          echo "::warning::Review workflow change - accepted on a manual independent review, not the action."
