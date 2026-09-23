@@ -66,6 +66,16 @@ internal/applemusic     HTTP client: Search, CreatePlaylist, AddTracks
 | 2 | auth: tokens missing, expired or rejected |
 | 3 | input: bad flags, unreadable file, nothing to import |
 
+## Things that have already bitten
+
+- **A skipped required check counts as passing.** A push and `gh pr ready`
+  two seconds apart once let `review` go green with no review (#16). The
+  review workflow now reads draft state live; never move that check back
+  into the job-level `if`.
+- **zsh heredocs expand `\uXXXX`.** Writing Go source through
+  `cat <<'EOF'` turned the `\uFEFF` escape into a literal BOM, which Go
+  rejects. Write Go files with an editor tool, not a heredoc.
+
 ## Commands
 
 ```sh

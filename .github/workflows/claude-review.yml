@@ -2,8 +2,8 @@ name: Claude review
 
 on:
   pull_request:
-    # Drafts are skipped (see the job `if`). ready_for_review is the event
-    # that matters: marking a draft ready is what asks for a review.
+    # Drafts get a no-op run (see the first step). ready_for_review is the
+    # event that matters: marking a draft ready is what asks for a review.
     # synchronize re-reviews fixes pushed after that.
     types: [opened, reopened, ready_for_review, synchronize]
   issue_comment:
@@ -24,20 +24,42 @@ permissions:
 
 jobs:
   review:
-    # Skip drafts and Dependabot (it gets no secrets, so the run would only
-    # fail). For comments, fire only on an explicit @claude mention.
+    # Dependabot gets no secrets, so a run would only fail. For comments,
+    # fire only on an explicit @claude mention on a pull request.
+    #
+    # Draft state is deliberately NOT checked here: the event payload is a
+    # snapshot. A push landing just before `gh pr ready` produces a run
+    # that still says draft, skips, and cancels the real review, and a
+    # skipped required check counts as passing (#16). It is checked live
+    # in the first step instead.
     if: |
       (github.event_name == 'pull_request' &&
-       github.event.pull_request.draft == false &&
        github.event.pull_request.user.login != 'dependabot[bot]') ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude'))
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
     steps:
+      - name: Skip drafts (checked live, not from the event payload)
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          draft="$(gh pr view "$PR" --repo "$REPO" --json isDraft --jq .isDraft)"
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          if [ "$draft" = "true" ]; then
+            echo "PR #$PR is a draft - no review. Mark it ready to request one."
+          fi
+
       - uses: actions/checkout@v7
+        if: steps.draft.outputs.draft != 'true'
         with:
           fetch-depth: 0
 
       - uses: anthropics/claude-code-action@v1
+        if: steps.draft.outputs.draft != 'true'
         with:
           # Minted with `claude setup-token` - the Claude subscription, not a
           # metered API key.
