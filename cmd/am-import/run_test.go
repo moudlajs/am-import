@@ -238,9 +238,13 @@ func TestRunDryRunWritesNoReport(t *testing.T) {
 
 func TestRunNothingMatched(t *testing.T) {
 	f, api, path := setup(t, "Nobody - Nothing\n")
-	err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger())
+	var out bytes.Buffer
+	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
 	if !errors.Is(err, errNothingMatched) {
 		t.Fatalf("run() error = %v, want errNothingMatched", err)
+	}
+	if !strings.Contains(out.String(), "line 1: Nobody - Nothing") {
+		t.Errorf("summary missing the unmatched line:\n%s", out.String())
 	}
 	if f.posts != 0 {
 		t.Errorf("sent %d POST requests, want 0", f.posts)

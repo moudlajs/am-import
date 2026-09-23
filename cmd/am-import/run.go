@@ -92,6 +92,7 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 	// to fix lines and retry.
 	reportPath := writeUnmatched(opts.file, unmatched, log)
 	if len(ids) == 0 {
+		printSummary(stdout, 0, unmatched, skipped, reportPath)
 		if reportPath == "" {
 			return errNothingMatched
 		}
