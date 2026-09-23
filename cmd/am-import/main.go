@@ -36,15 +36,20 @@ const (
 func main() {
 	// os.Exit skips deferred calls, so all the work happens in cli(), whose
 	// defers run before we exit with its result.
-	os.Exit(cli(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
+	// TODO(#8): derive ctx from signal.NotifyContext so Ctrl-C cancels cleanly.
+	os.Exit(cli(context.Background(), os.Args[1:], os.Stdout, os.Stderr, applemusic.DefaultBaseURL))
 }
 
 // cli parses flags, builds dependencies, calls run and maps its error to an
-// exit code. It takes its inputs as arguments so tests can drive it.
-func cli(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// exit code. It takes everything it touches as arguments, including the API
+// base URL, so tests can drive it end to end against an httptest.Server.
+func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL string) int {
 	opts, err := parseFlags(args, stderr)
 	if errors.Is(err, flag.ErrHelp) {
 		return exitOK
+	}
+	if errors.Is(err, errFlagsReported) {
+		return exitInput // the flag package already printed the error and usage
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "am-import: %v\n", err)
@@ -75,7 +80,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	api := applemusic.New(httpClient, applemusic.DefaultBaseURL, cfg.DevToken, cfg.UserToken)
+	api := applemusic.New(httpClient, baseURL, cfg.DevToken, cfg.UserToken)
 
 	if err := run(ctx, opts, api, stdout, logger); err != nil {
 		fmt.Fprintf(stderr, "am-import: %v\n", err)
@@ -83,6 +88,10 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	return exitOK
 }
+
+// errFlagsReported means flag parsing failed and the flag package has
+// already printed the problem and the usage text.
+var errFlagsReported = errors.New("invalid flags")
 
 // options are the parsed command-line flags and argument.
 type options struct {
@@ -111,7 +120,10 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	}
 
 	if err := fs.Parse(args); err != nil {
-		return o, err
+		if errors.Is(err, flag.ErrHelp) {
+			return o, err
+		}
+		return o, errFlagsReported
 	}
 	if o.showVersion {
 		return o, nil

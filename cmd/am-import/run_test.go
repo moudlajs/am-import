@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -135,7 +136,7 @@ func TestRunCreatesPlaylistOnce(t *testing.T) {
 func TestRunNothingMatched(t *testing.T) {
 	f, api, path := setup(t, "Nobody - Nothing\n")
 	err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger())
-	if err != errNothingMatched {
+	if !errors.Is(err, errNothingMatched) {
 		t.Fatalf("run() error = %v, want errNothingMatched", err)
 	}
 	if f.posts != 0 {
@@ -174,12 +175,60 @@ func TestCLIFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if code := cli(context.Background(), tt.args, &out, io.Discard); code != tt.wantCode {
+			if code := cli(context.Background(), tt.args, &out, io.Discard, "http://unused.invalid"); code != tt.wantCode {
 				t.Errorf("cli(%v) = %d, want %d", tt.args, code, tt.wantCode)
 			}
 			if !strings.Contains(out.String(), tt.wantOut) {
 				t.Errorf("stdout = %q, want containing %q", out.String(), tt.wantOut)
 			}
 		})
+	}
+}
+
+// TestCLIEndToEnd drives cli() through config loading, the storefront
+// fallback and client wiring, against the fake API.
+func TestCLIEndToEnd(t *testing.T) {
+	f := &fakeAPI{}
+	var storefrontPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/search") {
+			f.mu.Lock()
+			storefrontPath = r.URL.Path
+			f.mu.Unlock()
+		}
+		f.handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	// Run in an empty directory so a developer's real .env is never read.
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("songs.txt", []byte("Portishead - Glory Box\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_DEV_TOKEN", "fake-dev")
+	t.Setenv("AM_USER_TOKEN", "fake-user")
+	t.Setenv("AM_STOREFRONT", "cz")
+
+	var out, errOut bytes.Buffer
+	code := cli(context.Background(), []string{"-name", "Mix", "songs.txt"}, &out, &errOut, srv.URL)
+	if code != exitOK {
+		t.Fatalf("cli() = %d, want %d; stderr:\n%s", code, exitOK, errOut.String())
+	}
+	if storefrontPath != "/v1/catalog/cz/search" {
+		t.Errorf("searched %q, want the AM_STOREFRONT fallback cz", storefrontPath)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+	if strings.Contains(errOut.String(), "fake-dev") || strings.Contains(errOut.String(), "fake-user") {
+		t.Errorf("stderr leaks a token:\n%s", errOut.String())
+	}
+}
+
+func TestCLIFlagErrorPrintedOnce(t *testing.T) {
+	var errOut bytes.Buffer
+	cli(context.Background(), []string{"-nope", "x.txt"}, io.Discard, &errOut, "http://unused.invalid")
+	if n := strings.Count(errOut.String(), "-nope"); n != 1 {
+		t.Errorf("flag error printed %d times, want 1:\n%s", n, errOut.String())
 	}
 }
