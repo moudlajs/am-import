@@ -23,8 +23,10 @@ var version = "dev"
 
 // Exit codes. See the table in README.md and CLAUDE.md.
 //
-// TODO(#7): add exitAuth (2) and map config.ErrMissingToken and
-// applemusic.ErrUnauthorized to it with errors.Is. Until then both exit 1.
+// TODO(#7): map every error class with errors.Is: exitAuth (2) for
+// config.ErrMissingToken and applemusic.ErrUnauthorized, and exitInput (3)
+// for an unreadable or empty input file and errNothingMatched. Until then
+// every run() error exits 1, and a test should pin cli()'s codes.
 const (
 	exitOK    = 0
 	exitError = 1
