@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -187,6 +188,8 @@ func TestConfigNeverPrintsTokens(t *testing.T) {
 		"%v":     fmt.Sprintf("%v", c),
 		"String": c.String(),
 		"%+v":    fmt.Sprintf("%+v", c),
+		"%#v":    fmt.Sprintf("%#v", c),
+		"json":   mustJSON(t, c),
 		"slog":   logBuf.String(),
 	}
 	for name, out := range outputs {
@@ -197,4 +200,13 @@ func TestConfigNeverPrintsTokens(t *testing.T) {
 			t.Errorf("%s output lost the storefront: %s", name, out)
 		}
 	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

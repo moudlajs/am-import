@@ -27,10 +27,13 @@ const DefaultStorefront = "us"
 var ErrMissingToken = errors.New("missing token")
 
 // Config holds everything read from the environment.
+//
+// The tokens are redacted by String, GoString and LogValue, and excluded
+// from JSON, so no formatting or logging path prints them.
 type Config struct {
-	DevToken   string
-	UserToken  string
-	Storefront string
+	DevToken   string `json:"-"`
+	UserToken  string `json:"-"`
+	Storefront string `json:"storefront"`
 }
 
 // FromEnv reads the tokens and storefront from the process environment.
@@ -63,6 +66,9 @@ func (c Config) String() string {
 	return fmt.Sprintf("Config{DevToken:%s UserToken:%s Storefront:%s}",
 		redact(c.DevToken), redact(c.UserToken), c.Storefront)
 }
+
+// GoString covers %#v, which bypasses String.
+func (c Config) GoString() string { return c.String() }
 
 // LogValue implements slog.LogValuer, so slog.Any("config", c) is safe too.
 func (c Config) LogValue() slog.Value {
