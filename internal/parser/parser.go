@@ -34,9 +34,9 @@ func (q Query) Term() string {
 }
 
 // Parse reads r line by line and returns a Query for every line that is not
-// blank and not a # comment.
-func Parse(r io.Reader) ([]Query, error) {
-	var queries []Query
+// blank and not a # comment, plus how many lines were skipped as blank or
+// comments (for the end-of-run summary).
+func Parse(r io.Reader) (queries []Query, skipped int, err error) {
 
 	// bufio.Scanner's default split function (ScanLines) strips both "\n"
 	// and a preceding "\r", so CRLF files need no special handling here.
@@ -49,6 +49,7 @@ func Parse(r io.Reader) ([]Query, error) {
 		}
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
+			skipped++
 			continue
 		}
 
@@ -61,7 +62,7 @@ func Parse(r io.Reader) ([]Query, error) {
 		queries = append(queries, q)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("read input: %w", err)
+		return nil, 0, fmt.Errorf("read input: %w", err)
 	}
-	return queries, nil
+	return queries, skipped, nil
 }

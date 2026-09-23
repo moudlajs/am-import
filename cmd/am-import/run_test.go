@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -96,8 +97,8 @@ func TestRunDryRunCreatesNothing(t *testing.T) {
 	var out bytes.Buffer
 
 	err := run(context.Background(), options{dryRun: true, storefront: "cz", file: path}, api, &out, discardLogger())
-	if err != nil {
-		t.Fatalf("run() error = %v", err)
+	if !errors.Is(err, errPartial) { // one line has no match
+		t.Fatalf("run() error = %v, want errPartial", err)
 	}
 	if f.posts != 0 {
 		t.Errorf("dry run sent %d POST requests, want 0", f.posts)
@@ -114,15 +115,16 @@ func TestRunDryRunCreatesNothing(t *testing.T) {
 	}
 }
 
-// TODO(#9): one line is unmatched here; once #9 lands, run must report
-// that (exit 1) rather than return nil.
-func TestRunCreatesPlaylistOnce(t *testing.T) {
+// TestRunPartial: one of three lines is unmatched. The playlist is still
+// created from the rest, the line goes to unmatched.txt, and run reports
+// errPartial (exit 1).
+func TestRunPartial(t *testing.T) {
 	f, api, path := setup(t, input)
 	var out bytes.Buffer
 
 	err := run(context.Background(), options{name: "Mix", storefront: "cz", file: path}, api, &out, discardLogger())
-	if err != nil {
-		t.Fatalf("run() error = %v", err)
+	if !errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want errPartial", err)
 	}
 	if f.posts != 1 {
 		t.Fatalf("sent %d POST requests, want 1", f.posts)
@@ -130,16 +132,185 @@ func TestRunCreatesPlaylistOnce(t *testing.T) {
 	if strings.Join(f.created, ",") != "b1,p1" {
 		t.Errorf("created with tracks %v, want [b1 p1] in input order", f.created)
 	}
-	if !strings.Contains(out.String(), "2 of 3") {
-		t.Errorf("summary = %q", out.String())
+
+	report := filepath.Join(filepath.Dir(path), unmatchedFile)
+	got, readErr := os.ReadFile(report)
+	if readErr != nil {
+		t.Fatalf("unmatched.txt not written: %v", readErr)
+	}
+	// Comment header, then the unmatched line verbatim, so the file parses
+	// back into exactly that one query.
+	if !strings.HasSuffix(string(got), "\nNobody - Nothing\n") || !strings.HasPrefix(string(got), "# ") {
+		t.Errorf("unmatched.txt =\n%s", got)
+	}
+	for _, want := range []string{"Matched 2, unmatched 1, skipped 1", "line 4: Nobody - Nothing", report} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("summary missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunAllMatchedRemovesStaleReport(t *testing.T) {
+	_, api, path := setup(t, "Portishead - Glory Box\n")
+	report := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.WriteFile(report, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger()); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if _, err := os.Stat(report); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("stale unmatched.txt still there (stat err = %v)", err)
+	}
+}
+
+// A leftover report that can't be removed (here: a non-empty directory
+// with that name) must not stop the playlist being created.
+func TestRunStaleReportRemovalFailureIsNotFatal(t *testing.T) {
+	f, api, path := setup(t, "Portishead - Glory Box\n")
+	blocker := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger()); err != nil {
+		t.Fatalf("run() error = %v, want nil", err)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+}
+
+// Same for a partial run whose report can't be written: the matched songs
+// still become a playlist, and the unmatched lines are in the summary.
+func TestRunReportWriteFailureIsNotFatal(t *testing.T) {
+	f, api, path := setup(t, input)
+	blocker := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+
+	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
+	if !errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want errPartial", err)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+	if !strings.Contains(out.String(), "line 4: Nobody - Nothing") {
+		t.Errorf("summary missing the unmatched line:\n%s", out.String())
+	}
+}
+
+// A create that fails after a partial match still shows the summary and
+// leaves the report on disk.
+func TestRunCreateFailureStillSummarises(t *testing.T) {
+	f := &fakeAPI{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		f.handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	api := applemusic.New(srv.Client(), srv.URL, "fake-dev", "fake-user")
+	path := filepath.Join(t.TempDir(), "songs.txt")
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+
+	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
+	if err == nil || errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want the create failure", err)
+	}
+	if !strings.Contains(out.String(), "Matched 2, unmatched 1") {
+		t.Errorf("summary missing:\n%s", out.String())
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(path), unmatchedFile)); statErr != nil {
+		t.Errorf("report not on disk: %v", statErr)
+	}
+}
+
+// Re-feeding an unmatched.txt that still has a bad line must not overwrite
+// (truncate) the input.
+func TestRunPartialNeverOverwritesInput(t *testing.T) {
+	f, api, _ := setup(t, "")
+	path := filepath.Join(t.TempDir(), unmatchedFile)
+	original := "# my notes\nPortishead - Glory Box\nNobody - Nothing\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger())
+	if !errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want errPartial", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != original {
+		t.Errorf("input was modified:\n%s", got)
+	}
+	if f.posts != 1 {
+		t.Errorf("sent %d POST requests, want 1", f.posts)
+	}
+}
+
+// Re-feeding unmatched.txt after fixing it must not delete the input.
+func TestRunAllMatchedKeepsReportThatIsTheInput(t *testing.T) {
+	_, api, _ := setup(t, "")
+	path := filepath.Join(t.TempDir(), unmatchedFile)
+	if err := os.WriteFile(path, []byte("# fixed\nPortishead - Glory Box\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger()); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the input file was removed: %v", err)
+	}
+}
+
+func TestRunDryRunWritesNoReport(t *testing.T) {
+	_, api, path := setup(t, input)
+	var out bytes.Buffer
+
+	err := run(context.Background(), options{dryRun: true, file: path}, api, &out, discardLogger())
+	if !errors.Is(err, errPartial) {
+		t.Fatalf("run() error = %v, want errPartial", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(path), unmatchedFile)); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("dry run wrote unmatched.txt (stat err = %v)", statErr)
+	}
+	if !strings.Contains(out.String(), "unmatched 1") {
+		t.Errorf("dry-run summary missing:\n%s", out.String())
 	}
 }
 
 func TestRunNothingMatched(t *testing.T) {
 	f, api, path := setup(t, "Nobody - Nothing\n")
-	err := run(context.Background(), options{name: "Mix", file: path}, api, io.Discard, discardLogger())
+	report := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.WriteFile(report, []byte("stale from an earlier run\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
 	if !errors.Is(err, errNothingMatched) {
 		t.Fatalf("run() error = %v, want errNothingMatched", err)
+	}
+	if !strings.Contains(err.Error(), report) {
+		t.Errorf("error %q should name the report", err)
+	}
+	// The report is refreshed with this run's lines, not left stale.
+	got, readErr := os.ReadFile(report)
+	if readErr != nil || strings.Contains(string(got), "stale") || !strings.HasSuffix(string(got), "\nNobody - Nothing\n") {
+		t.Errorf("unmatched.txt not refreshed (err %v):\n%s", readErr, got)
+	}
+	if !strings.Contains(out.String(), "line 1: Nobody - Nothing") {
+		t.Errorf("summary missing the unmatched line:\n%s", out.String())
 	}
 	if f.posts != 0 {
 		t.Errorf("sent %d POST requests, want 0", f.posts)
@@ -279,6 +450,7 @@ func TestCLIExitCodes(t *testing.T) {
 		wantStderr string
 	}{
 		{"all matched", ok, "Portishead - Glory Box\n", false, []string{"-name", "x", "input.txt"}, exitOK, ""},
+		{"partial", ok, "Portishead - Glory Box\nNobody - Nothing\n", false, []string{"-name", "x", "input.txt"}, exitError, "unmatched.txt"},
 		{"missing token", ok, "Portishead - Glory Box\n", true, []string{"-name", "x", "input.txt"}, exitAuth, "AM_DEV_TOKEN is not set"},
 		{"401", status(http.StatusUnauthorized), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitAuth, "DevTools"},
 		{"403", status(http.StatusForbidden), "a - b\n", false, []string{"-dry-run", "input.txt"}, exitAuth, "media-user-token"},
@@ -327,8 +499,9 @@ func TestRunWaitsBetweenSearches(t *testing.T) {
 	const delay = 40 * time.Millisecond
 
 	start := time.Now()
+	// None of these lines match the fake catalog; only the timing matters.
 	err := run(context.Background(), options{dryRun: true, delay: delay, file: path}, api, io.Discard, discardLogger())
-	if err != nil {
+	if err != nil && !errors.Is(err, errPartial) {
 		t.Fatalf("run() error = %v", err)
 	}
 	// Three searches means two pauses; none before the first.

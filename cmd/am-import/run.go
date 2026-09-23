@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -18,6 +21,13 @@ import (
 // errNothingMatched means no line produced a usable match, so there is
 // nothing to put in a playlist.
 var errNothingMatched = errors.New("no line matched a song; nothing to import")
+
+// errPartial means the run finished but some lines had no match; they are
+// listed in unmatched.txt. It maps to exit code 1.
+var errPartial = errors.New("some lines did not match")
+
+// unmatchedFile is written next to the input file.
+const unmatchedFile = "unmatched.txt"
 
 // errNoSongs means the input file had no song lines at all.
 var errNoSongs = errors.New("no songs found (only blank lines or comments?)")
@@ -32,11 +42,11 @@ type resolved struct {
 
 // run does the actual work: read, search, match, then print or create.
 func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Writer, log *slog.Logger) error {
-	queries, err := readQueries(opts.file)
+	queries, skipped, err := readQueries(opts.file)
 	if err != nil {
 		return err
 	}
-	log.Debug("parsed input", "file", opts.file, "queries", len(queries))
+	log.Debug("parsed input", "file", opts.file, "queries", len(queries), "skipped", skipped)
 
 	results := make([]resolved, 0, len(queries))
 	for i, q := range queries {
@@ -59,29 +69,121 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 		results = append(results, r)
 	}
 
-	if opts.dryRun {
-		return printTable(stdout, results)
-	}
-
 	var ids []string
+	var unmatched []parser.Query
 	for _, r := range results {
 		if r.ok {
 			ids = append(ids, r.song.ID)
+		} else {
+			unmatched = append(unmatched, r.query)
 		}
 	}
-	if len(ids) == 0 {
-		return errNothingMatched
+
+	if opts.dryRun {
+		if err := printTable(stdout, results); err != nil {
+			return err
+		}
+		printSummary(stdout, len(ids), unmatched, skipped, "")
+		return partial(unmatched, "")
 	}
 
+	// Write the report before creating the playlist, so it exists even if
+	// the create call fails, or nothing matched at all, and the user wants
+	// to fix lines and retry.
+	reportPath := writeUnmatched(opts.file, unmatched, log)
+	if len(ids) == 0 {
+		printSummary(stdout, 0, unmatched, skipped, reportPath)
+		if reportPath == "" {
+			return errNothingMatched
+		}
+		return fmt.Errorf("%w (all lines listed in %s)", errNothingMatched, reportPath)
+	}
+
+	// Summary first, so the user sees what matched even if creating fails.
+	printSummary(stdout, len(ids), unmatched, skipped, reportPath)
 	id, err := api.CreatePlaylist(ctx, opts.name, ids)
 	if err != nil {
 		return fmt.Errorf("create playlist %q: %w", opts.name, err)
 	}
-	// TODO(#9): write unmatched.txt and return an error that exits 1 when
-	// some lines did not match. Until then a partial match exits 0.
 	log.Info("created playlist", "name", opts.name, "id", id, "tracks", len(ids))
-	fmt.Fprintf(stdout, "Created %q with %d of %d songs.\n", opts.name, len(ids), len(results))
-	return nil
+	fmt.Fprintf(stdout, "Created %q with %d songs.\n", opts.name, len(ids))
+	return partial(unmatched, reportPath)
+}
+
+// partial returns errPartial, with the count and report location, when
+// any line went unmatched.
+func partial(unmatched []parser.Query, reportPath string) error {
+	switch {
+	case len(unmatched) == 0:
+		return nil
+	case reportPath == "":
+		return fmt.Errorf("%d line(s) unmatched: %w", len(unmatched), errPartial)
+	default:
+		return fmt.Errorf("%d line(s) unmatched, listed in %s: %w", len(unmatched), reportPath, errPartial)
+	}
+}
+
+func printSummary(w io.Writer, matched int, unmatched []parser.Query, skipped int, reportPath string) {
+	fmt.Fprintf(w, "Matched %d, unmatched %d, skipped %d (blank or comment).\n", matched, len(unmatched), skipped)
+	if len(unmatched) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Unmatched:")
+	for _, q := range unmatched {
+		fmt.Fprintf(w, "  line %d: %s\n", q.Line, q.Raw)
+	}
+	if reportPath != "" {
+		fmt.Fprintf(w, "Written to %s - fix the lines and feed it back in.\n", reportPath)
+	}
+}
+
+// writeUnmatched writes the unmatched lines verbatim to unmatched.txt next
+// to the input, so the file can be edited and used as input again. With
+// nothing unmatched it removes a stale report from an earlier run, unless
+// that report is the input itself. It returns the path written, or "".
+//
+// It never fails the run: the report is a convenience (the summary prints
+// the same lines), so problems are logged as warnings and the playlist is
+// still created.
+func writeUnmatched(input string, unmatched []parser.Query, log *slog.Logger) string {
+	path := filepath.Join(filepath.Dir(input), unmatchedFile)
+
+	// Never touch the input file: when the input is itself unmatched.txt
+	// (a report being re-fed), leave it exactly as the user wrote it.
+	if sameFile(path, input) {
+		if len(unmatched) > 0 {
+			log.Warn("not overwriting the input file with the report; the unmatched lines are in the summary", "path", path)
+		}
+		return ""
+	}
+
+	if len(unmatched) == 0 {
+		// A missing file is the normal case. Any other failure only leaves
+		// a leftover file behind, which must not cost the user the playlist.
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			log.Warn("could not remove stale report", "path", path, "error", err)
+		}
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# am-import: no match found for these lines of %s.\n", filepath.Base(input))
+	b.WriteString("# Fix them (e.g. \"Artist - Title\") and run am-import on this file.\n")
+	for _, q := range unmatched {
+		b.WriteString(q.Raw + "\n")
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		log.Warn("could not write unmatched report; the lines are in the summary below", "path", path, "error", err)
+		return ""
+	}
+	return path
+}
+
+// sameFile reports whether a and b name the same existing file.
+func sameFile(a, b string) bool {
+	ai, errA := os.Stat(a)
+	bi, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ai, bi)
 }
 
 // sleep waits for d, or returns early with ctx's error if ctx is cancelled
@@ -100,21 +202,21 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func readQueries(path string) ([]parser.Query, error) {
+func readQueries(path string) ([]parser.Query, int, error) {
 	f, err := os.Open(path) // #nosec G304 -- the user names the file to read.
 	if err != nil {
-		return nil, fmt.Errorf("open input: %w", err)
+		return nil, 0, fmt.Errorf("open input: %w", err)
 	}
 	defer func() { _ = f.Close() }() // read-only; a close error can't lose data
 
-	queries, err := parser.Parse(f)
+	queries, skipped, err := parser.Parse(f)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, 0, fmt.Errorf("%s: %w", path, err)
 	}
 	if len(queries) == 0 {
-		return nil, fmt.Errorf("%s: %w", path, errNoSongs)
+		return nil, 0, fmt.Errorf("%s: %w", path, errNoSongs)
 	}
-	return queries, nil
+	return queries, skipped, nil
 }
 
 // resolve searches for one query and picks the best result.
