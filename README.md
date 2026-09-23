@@ -163,8 +163,10 @@ Slow down, and see every search and match:
 am-import -v -delay 2s -name "Big list" big.txt
 ```
 
-Press <kbd>Ctrl</kbd>+<kbd>C</kbd> at any point to stop. Nothing is created
-or changed on a cancelled run.
+Press <kbd>Ctrl</kbd>+<kbd>C</kbd> at any point to stop. If you stop during
+the searches, nothing is created or changed. If you stop during the final
+create or append request, Apple may already have applied it; `am-import` says
+so, and you should check your library.
 
 ## Exit codes
 

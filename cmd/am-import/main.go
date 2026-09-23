@@ -118,8 +118,10 @@ func report(stderr io.Writer, err error) int {
 		fmt.Fprintln(stderr, authHelp)
 	case errors.Is(err, applemusic.ErrRateLimited):
 		fmt.Fprintln(stderr, "Apple Music is rate limiting requests. Wait a minute, then run again with a larger -delay (e.g. -delay 2s).")
+	case errors.Is(err, errWriteInterrupted):
+		// The error text already says to check the library.
 	case errors.Is(err, context.Canceled):
-		fmt.Fprintln(stderr, "Interrupted; no playlist was created or changed.")
+		fmt.Fprintln(stderr, "Interrupted before writing; no playlist was created or changed.")
 	}
 	return code
 }
