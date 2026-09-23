@@ -9,9 +9,10 @@ import (
 
 func TestParse(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  []Query
+		name        string
+		input       string
+		want        []Query
+		wantSkipped int
 	}{
 		{
 			name:  "artist and title",
@@ -29,9 +30,10 @@ func TestParse(t *testing.T) {
 			want:  []Query{{Artist: "Jay-Z", Title: "99 Problems", Raw: "Jay-Z - 99 Problems", Line: 1}},
 		},
 		{
-			name:  "comments and blank lines are skipped, line numbers kept",
-			input: "# my list\n\n   \nMassive Attack - Teardrop\n  # indented comment\n",
-			want:  []Query{{Artist: "Massive Attack", Title: "Teardrop", Raw: "Massive Attack - Teardrop", Line: 4}},
+			name:        "comments and blank lines are skipped, line numbers kept",
+			input:       "# my list\n\n   \nMassive Attack - Teardrop\n  # indented comment\n",
+			want:        []Query{{Artist: "Massive Attack", Title: "Teardrop", Raw: "Massive Attack - Teardrop", Line: 4}},
+			wantSkipped: 4,
 		},
 		{
 			name:  "missing separator is a whole-term query",
@@ -67,9 +69,10 @@ func TestParse(t *testing.T) {
 			want:  []Query{{Artist: "Radiohead", Title: "Airbag", Raw: "Radiohead - Airbag", Line: 1}},
 		},
 		{
-			name:  "BOM before a comment still makes it a comment",
-			input: "\uFEFF# header\nRadiohead - Airbag",
-			want:  []Query{{Artist: "Radiohead", Title: "Airbag", Raw: "Radiohead - Airbag", Line: 2}},
+			name:        "BOM before a comment still makes it a comment",
+			input:       "\uFEFF# header\nRadiohead - Airbag",
+			want:        []Query{{Artist: "Radiohead", Title: "Airbag", Raw: "Radiohead - Airbag", Line: 2}},
+			wantSkipped: 1,
 		},
 		{
 			name:  "empty input",
@@ -77,17 +80,21 @@ func TestParse(t *testing.T) {
 			want:  nil,
 		},
 		{
-			name:  "only comments",
-			input: "# a\n# b\n",
-			want:  nil,
+			name:        "only comments",
+			input:       "# a\n# b\n",
+			want:        nil,
+			wantSkipped: 2,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Parse(strings.NewReader(tt.input))
+			got, skipped, err := Parse(strings.NewReader(tt.input))
 			if err != nil {
 				t.Fatalf("Parse() error = %v", err)
+			}
+			if skipped != tt.wantSkipped {
+				t.Errorf("skipped = %d, want %d", skipped, tt.wantSkipped)
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Parse() =\n  %#v\nwant\n  %#v", got, tt.want)
@@ -116,7 +123,7 @@ type failingReader struct{}
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("disk on fire") }
 
 func TestParseReadError(t *testing.T) {
-	_, err := Parse(failingReader{})
+	_, _, err := Parse(failingReader{})
 	if err == nil || !strings.Contains(err.Error(), "disk on fire") {
 		t.Fatalf("Parse() error = %v, want wrapped read error", err)
 	}

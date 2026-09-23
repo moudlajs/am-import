@@ -28,7 +28,7 @@ var version = "dev"
 // errors onto them.
 const (
 	exitOK    = 0
-	exitError = 1 // generic failure (API/network), and "partial" once #9 lands
+	exitError = 1 // partial (errPartial), or any other failure
 	exitAuth  = 2
 	exitInput = 3
 )

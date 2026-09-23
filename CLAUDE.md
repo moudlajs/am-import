@@ -67,7 +67,7 @@ internal/applemusic     HTTP client: Search, CreatePlaylist, AddTracks
 | Code | Meaning |
 |---|---|
 | 0 | every line matched, playlist created/updated |
-| 1 | generic failure (429, 5xx, network, decode errors); will also mean "partial: some lines unmatched" once #9 lands |
+| 1 | partial: some lines unmatched (listed in `unmatched.txt`; in `-dry-run` only printed), or any other failure: 429, 5xx, network |
 | 2 | auth: tokens missing, expired or rejected |
 | 3 | input: bad flags, unreadable file, nothing to import |
 
