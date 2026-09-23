@@ -232,3 +232,73 @@ func TestCLIFlagErrorPrintedOnce(t *testing.T) {
 		t.Errorf("flag error printed %d times, want 1:\n%s", n, errOut.String())
 	}
 }
+
+// cliRun runs cli() in a temp dir with input.txt holding input, tokens set
+// (unless noTokens), and the API answered by handler. It returns the exit
+// code and stderr.
+func cliRun(t *testing.T, handler http.HandlerFunc, input string, noTokens bool, args ...string) (int, string) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	t.Chdir(t.TempDir()) // never read a developer's real .env
+	if input != "" {
+		if err := os.WriteFile("input.txt", []byte(input), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, k := range []string{"AM_DEV_TOKEN", "AM_USER_TOKEN", "AM_STOREFRONT"} {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k) // t.Setenv's cleanup restores the original value
+	}
+	if !noTokens {
+		t.Setenv("AM_DEV_TOKEN", "fake-dev")
+		t.Setenv("AM_USER_TOKEN", "fake-user")
+	}
+
+	var errOut bytes.Buffer
+	code := cli(context.Background(), args, io.Discard, &errOut, srv.URL)
+	return code, errOut.String()
+}
+
+func status(code int) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }
+}
+
+func TestCLIExitCodes(t *testing.T) {
+	ok := (&fakeAPI{}).handler
+	tests := []struct {
+		name       string
+		handler    http.HandlerFunc
+		input      string
+		noTokens   bool
+		args       []string
+		wantCode   int
+		wantStderr string
+	}{
+		{"all matched", ok, "Portishead - Glory Box\n", false, []string{"-name", "x", "input.txt"}, exitOK, ""},
+		{"missing token", ok, "Portishead - Glory Box\n", true, []string{"-name", "x", "input.txt"}, exitAuth, "AM_DEV_TOKEN is not set"},
+		{"401", status(http.StatusUnauthorized), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitAuth, "DevTools"},
+		{"403", status(http.StatusForbidden), "a - b\n", false, []string{"-dry-run", "input.txt"}, exitAuth, "media-user-token"},
+		{"429", status(http.StatusTooManyRequests), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitError, "rate limiting"},
+		{"500", status(http.StatusInternalServerError), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitError, "unexpected status 500"},
+		{"missing file", ok, "", false, []string{"-name", "x", "nope.txt"}, exitInput, "open input"},
+		{"only comments", ok, "# nothing\n\n", false, []string{"-name", "x", "input.txt"}, exitInput, "no songs found"},
+		{"nothing matched", ok, "Nobody - Nothing\n", false, []string{"-name", "x", "input.txt"}, exitInput, "nothing to import"},
+		{"bad flag", ok, "", false, []string{"-nope"}, exitInput, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, stderr := cliRun(t, tt.handler, tt.input, tt.noTokens, tt.args...)
+			if code != tt.wantCode {
+				t.Errorf("exit code = %d, want %d; stderr:\n%s", code, tt.wantCode, stderr)
+			}
+			if !strings.Contains(stderr, tt.wantStderr) {
+				t.Errorf("stderr missing %q:\n%s", tt.wantStderr, stderr)
+			}
+			if strings.Contains(stderr, "fake-dev") || strings.Contains(stderr, "fake-user") {
+				t.Errorf("stderr leaks a token:\n%s", stderr)
+			}
+		})
+	}
+}
