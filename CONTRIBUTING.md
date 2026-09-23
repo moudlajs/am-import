@@ -41,6 +41,9 @@ Every change follows the same path:
 | `refactor` | no behaviour change |
 | `chore` | deps, repo plumbing, releases |
 
+No attribution trailers or "Generated with" footers, in branch commits
+too: a squash merge copies branch-commit trailers into `main`.
+
 Scopes: `parser`, `matcher`, `applemusic`, `config`, `cli`, `release`.
 
 ## What CI enforces
