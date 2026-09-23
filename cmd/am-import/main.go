@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/moudlajs/am-import/internal/applemusic"
@@ -44,10 +46,19 @@ Refresh them:
 See "Token setup" in the README.`, config.EnvDevToken, config.EnvUserToken)
 
 func main() {
-	// os.Exit skips deferred calls, so all the work happens in cli(), whose
+	// os.Exit skips deferred calls, so the work happens in realMain, whose
 	// defers run before we exit with its result.
-	// TODO(#8): derive ctx from signal.NotifyContext so Ctrl-C cancels cleanly.
-	os.Exit(cli(context.Background(), os.Args[1:], os.Stdout, os.Stderr, applemusic.DefaultBaseURL))
+	os.Exit(realMain())
+}
+
+func realMain() int {
+	// Ctrl-C (SIGINT) or SIGTERM cancels ctx. Every request and every wait
+	// between requests watches ctx, so the run stops promptly and no
+	// playlist is created. stop() restores default signal handling, so a
+	// second Ctrl-C kills the process outright.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return cli(ctx, os.Args[1:], os.Stdout, os.Stderr, applemusic.DefaultBaseURL)
 }
 
 // cli parses flags, builds dependencies, calls run and maps its error to an
@@ -106,7 +117,9 @@ func report(stderr io.Writer, err error) int {
 	case errors.Is(err, applemusic.ErrUnauthorized):
 		fmt.Fprintln(stderr, authHelp)
 	case errors.Is(err, applemusic.ErrRateLimited):
-		fmt.Fprintln(stderr, "Apple Music is rate limiting requests. Wait a minute and run again.")
+		fmt.Fprintln(stderr, "Apple Music is rate limiting requests. Wait a minute, then run again with a larger -delay (e.g. -delay 2s).")
+	case errors.Is(err, context.Canceled):
+		fmt.Fprintln(stderr, "Interrupted; no playlist was created or changed.")
 	}
 	return code
 }
@@ -137,6 +150,7 @@ type options struct {
 	name        string
 	storefront  string // empty means "use AM_STOREFRONT or its default"
 	dryRun      bool
+	delay       time.Duration // pause between search requests
 	verbose     bool
 	showVersion bool
 	file        string
@@ -151,10 +165,11 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
 	fset.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
 	fset.BoolVar(&o.dryRun, "dry-run", false, "search and show matches, but create nothing")
+	fset.DurationVar(&o.delay, "delay", 500*time.Millisecond, "pause between search requests, e.g. 500ms or 2s")
 	fset.BoolVar(&o.verbose, "v", false, "verbose (debug) logging")
 	fset.BoolVar(&o.showVersion, "version", false, "print version and exit")
 	fset.Usage = func() {
-		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-v] <file.txt>")
+		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-delay 500ms] [-v] <file.txt>")
 		fset.PrintDefaults()
 	}
 
@@ -172,6 +187,9 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("expected exactly one input file, got %d arguments", fset.NArg())
 	}
 	o.file = fset.Arg(0)
+	if o.delay < 0 {
+		return o, errors.New("-delay must not be negative")
+	}
 	if o.name == "" && !o.dryRun {
 		return o, errors.New("-name is required (or use -dry-run)")
 	}

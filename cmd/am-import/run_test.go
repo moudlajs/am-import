@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/moudlajs/am-import/internal/applemusic"
 )
@@ -280,12 +282,13 @@ func TestCLIExitCodes(t *testing.T) {
 		{"missing token", ok, "Portishead - Glory Box\n", true, []string{"-name", "x", "input.txt"}, exitAuth, "AM_DEV_TOKEN is not set"},
 		{"401", status(http.StatusUnauthorized), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitAuth, "DevTools"},
 		{"403", status(http.StatusForbidden), "a - b\n", false, []string{"-dry-run", "input.txt"}, exitAuth, "media-user-token"},
-		{"429", status(http.StatusTooManyRequests), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitError, "rate limiting"},
+		{"429", status(http.StatusTooManyRequests), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitError, "larger -delay"},
 		{"500", status(http.StatusInternalServerError), "a - b\n", false, []string{"-name", "x", "input.txt"}, exitError, "unexpected status 500"},
 		{"missing file", ok, "", false, []string{"-name", "x", "nope.txt"}, exitInput, "open input"},
 		{"only comments", ok, "# nothing\n\n", false, []string{"-name", "x", "input.txt"}, exitInput, "no songs found"},
 		{"nothing matched", ok, "Nobody - Nothing\n", false, []string{"-name", "x", "input.txt"}, exitInput, "nothing to import"},
 		{"bad flag", ok, "", false, []string{"-nope"}, exitInput, ""},
+		{"negative delay", ok, "", false, []string{"-delay", "-1s", "-dry-run", "input.txt"}, exitInput, "must not be negative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -300,5 +303,101 @@ func TestCLIExitCodes(t *testing.T) {
 				t.Errorf("stderr leaks a token:\n%s", stderr)
 			}
 		})
+	}
+}
+
+func TestSleep(t *testing.T) {
+	if err := sleep(context.Background(), time.Millisecond); err != nil {
+		t.Errorf("sleep() = %v, want nil", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	if err := sleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Errorf("sleep() = %v, want context.Canceled", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("sleep ignored the cancelled context")
+	}
+}
+
+func TestRunWaitsBetweenSearches(t *testing.T) {
+	_, api, path := setup(t, "a - 1\nb - 2\nc - 3\n")
+	const delay = 40 * time.Millisecond
+
+	start := time.Now()
+	err := run(context.Background(), options{dryRun: true, delay: delay, file: path}, api, io.Discard, discardLogger())
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	// Three searches means two pauses; none before the first.
+	if elapsed := time.Since(start); elapsed < 2*delay {
+		t.Errorf("run took %v, want at least %v", elapsed, 2*delay)
+	}
+}
+
+// TestRunCancelledMidRun cancels the context while the first search is in
+// flight, as Ctrl-C would, and checks the run stops without creating
+// anything - even though the next step is a long -delay.
+func TestRunCancelledMidRun(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	f := &fakeAPI{}
+	var searches atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/search") {
+			searches.Add(1)
+			cancel() // "Ctrl-C" during the first request
+		}
+		f.handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	api := applemusic.New(srv.Client(), srv.URL, "fake-dev", "fake-user")
+
+	path := filepath.Join(t.TempDir(), "songs.txt")
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	err := run(ctx, options{name: "Mix", delay: time.Hour, file: path}, api, io.Discard, discardLogger())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() error = %v, want context.Canceled", err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("run did not stop promptly after cancellation")
+	}
+	if n := searches.Load(); n != 1 {
+		t.Errorf("made %d searches, want 1", n)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.posts != 0 {
+		t.Errorf("sent %d POST requests after cancellation, want 0", f.posts)
+	}
+}
+
+func TestCLIInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	srv := httptest.NewServer(http.HandlerFunc((&fakeAPI{}).handler))
+	t.Cleanup(srv.Close)
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("input.txt", []byte("Portishead - Glory Box\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AM_DEV_TOKEN", "fake-dev")
+	t.Setenv("AM_USER_TOKEN", "fake-user")
+
+	var errOut bytes.Buffer
+	code := cli(ctx, []string{"-name", "x", "input.txt"}, io.Discard, &errOut, srv.URL)
+	if code != exitError {
+		t.Errorf("exit code = %d, want %d", code, exitError)
+	}
+	if !strings.Contains(errOut.String(), "no playlist was created") {
+		t.Errorf("stderr = %q, want the interrupted message", errOut.String())
 	}
 }
