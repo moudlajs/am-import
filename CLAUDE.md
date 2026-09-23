@@ -72,6 +72,14 @@ internal/applemusic     HTTP client: Search, CreatePlaylist, AddTracks
   two seconds apart once let `review` go green with no review (#16). The
   review workflow now reads draft state live; never move that check back
   into the job-level `if`.
+- **claude-code-action can exit green without reviewing.** It refuses to
+  run on a PR that changes its own workflow file, and says so only in an
+  annotation (#17). The last step of `claude-review.yml` now fails the job
+  unless `claude[bot]` commented during the run.
+- **PRs that change `claude-review.yml` cannot be reviewed by the action.**
+  The verify step lets them through with a warning. Before merging one,
+  run an independent review with a fresh subagent that did not write the
+  change, and post its findings on the PR with `gh pr comment`.
 - **zsh heredocs expand `\uXXXX`.** Writing Go source through
   `cat <<'EOF'` turned the `\uFEFF` escape into a literal BOM, which Go
   rejects. Write Go files with an editor tool, not a heredoc.

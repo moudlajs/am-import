@@ -49,6 +49,7 @@ jobs:
         run: |
           draft="$(gh pr view "$PR" --repo "$REPO" --json isDraft --jq .isDraft)"
           echo "draft=$draft" >> "$GITHUB_OUTPUT"
+          echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           if [ "$draft" = "true" ]; then
             echo "PR #$PR is a draft - no review. Mark it ready to request one."
           fi
@@ -106,3 +107,29 @@ jobs:
             Be specific: file:line, a concrete failing scenario, a suggested
             fix. If you find nothing significant, say so plainly rather than
             padding. Do not approve or merge.
+
+      # The action exits green without reviewing in some cases, notably when
+      # the PR changes this workflow file (it refuses to run a workflow that
+      # differs from main's). A green `review` must mean a review happened,
+      # so require a comment from claude[bot] posted during this run.
+      - name: Verify a review was actually posted
+        if: steps.draft.outputs.draft != 'true' && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          STARTED: ${{ steps.draft.outputs.started }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          n="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                --jq "[.[] | select(.user.login == \"claude[bot]\" and .created_at >= \"$STARTED\")] | length" \
+              | awk '{s+=$1} END {print s+0}')"
+          if [ "$n" -gt 0 ]; then echo "ok - review posted"; exit 0; fi
+
+          if ! git diff --quiet "origin/$BASE" HEAD -- .github/workflows/claude-review.yml; then
+            echo "::warning::This PR changes claude-review.yml, which claude-code-action refuses to run on. It needs an independent review posted by hand before merging - see CLAUDE.md."
+            exit 0
+          fi
+
+          echo "::error::No review comment from claude[bot] since $STARTED. The action ran but did not review; check its log."
+          exit 1
