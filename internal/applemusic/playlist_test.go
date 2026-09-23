@@ -54,6 +54,7 @@ func TestCreatePlaylistErrors(t *testing.T) {
 		{name: "403", status: http.StatusForbidden, wantErrIs: ErrUnauthorized},
 		{name: "429", status: http.StatusTooManyRequests, wantErrIs: ErrRateLimited},
 		{name: "no data", status: http.StatusCreated, body: `{"data":[]}`, wantErr: "no playlist ID"},
+		{name: "empty ID", status: http.StatusCreated, body: `{"data":[{"id":""}]}`, wantErr: "no playlist ID"},
 		{name: "malformed JSON", status: http.StatusCreated, body: `{`, wantErr: "decode"},
 	}
 	for _, tt := range tests {
@@ -70,8 +71,26 @@ func TestCreatePlaylistErrors(t *testing.T) {
 			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
 				t.Fatalf("error = %v, want containing %q", err, tt.wantErr)
 			}
+			if err != nil && (strings.Contains(err.Error(), testDevToken) || strings.Contains(err.Error(), testUserToken)) {
+				t.Errorf("error leaks a token: %v", err)
+			}
 		})
 	}
+}
+
+func TestCreatePlaylistNoTracksEncodesEmptyArray(t *testing.T) {
+	var body []byte
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data":[{"id":"p.x"}]}`))
+	})
+
+	if _, err := c.CreatePlaylist(context.Background(), "Empty", nil); err != nil {
+		t.Fatalf("CreatePlaylist() error = %v", err)
+	}
+	// A nil slice would encode as null, which is not what the API expects.
+	assertJSONEqual(t, body, `{"attributes":{"name":"Empty"},"relationships":{"tracks":{"data":[]}}}`)
 }
 
 func assertJSONEqual(t *testing.T, got []byte, want string) {
