@@ -3,24 +3,138 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
 	"os"
+	"time"
+
+	"github.com/moudlajs/am-import/internal/applemusic"
+	"github.com/moudlajs/am-import/internal/config"
 )
 
 // version is overwritten at build time with -ldflags "-X main.version=...".
 // It must be a package-level var (not a const) for -X to work.
 var version = "dev"
 
-func main() {
-	showVersion := flag.Bool("version", false, "print version and exit")
-	flag.Parse()
+// Exit codes. See the table in README.md and CLAUDE.md.
+//
+// TODO(#7): map every error class with errors.Is: exitAuth (2) for
+// config.ErrMissingToken and applemusic.ErrUnauthorized, and exitInput (3)
+// for an unreadable or empty input file and errNothingMatched. Until then
+// every run() error exits 1, and a test should pin cli()'s codes.
+const (
+	exitOK    = 0
+	exitError = 1
+	exitInput = 3
+)
 
-	if *showVersion {
-		fmt.Println(version)
-		return
+func main() {
+	// os.Exit skips deferred calls, so all the work happens in cli(), whose
+	// defers run before we exit with its result.
+	// TODO(#8): derive ctx from signal.NotifyContext so Ctrl-C cancels cleanly.
+	os.Exit(cli(context.Background(), os.Args[1:], os.Stdout, os.Stderr, applemusic.DefaultBaseURL))
+}
+
+// cli parses flags, builds dependencies, calls run and maps its error to an
+// exit code. It takes everything it touches as arguments, including the API
+// base URL, so tests can drive it end to end against an httptest.Server.
+func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL string) int {
+	opts, err := parseFlags(args, stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return exitOK
+	}
+	if errors.Is(err, errFlagsReported) {
+		return exitInput // the flag package already printed the error and usage
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "am-import: %v\n", err)
+		return exitInput
+	}
+	if opts.showVersion {
+		fmt.Fprintln(stdout, version)
+		return exitOK
 	}
 
-	fmt.Fprintln(os.Stderr, "am-import: not implemented yet")
-	os.Exit(3)
+	level := slog.LevelInfo
+	if opts.verbose {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
+
+	if err := config.LoadDotEnv(".env"); err != nil {
+		fmt.Fprintf(stderr, "am-import: %v\n", err)
+		return exitInput
+	}
+	cfg, err := config.FromEnv()
+	if err != nil {
+		fmt.Fprintf(stderr, "am-import: %v\n", err)
+		return exitError
+	}
+	if opts.storefront == "" {
+		opts.storefront = cfg.Storefront
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	api := applemusic.New(httpClient, baseURL, cfg.DevToken, cfg.UserToken)
+
+	if err := run(ctx, opts, api, stdout, logger); err != nil {
+		fmt.Fprintf(stderr, "am-import: %v\n", err)
+		return exitError
+	}
+	return exitOK
+}
+
+// errFlagsReported means flag parsing failed and the flag package has
+// already printed the problem and the usage text.
+var errFlagsReported = errors.New("invalid flags")
+
+// options are the parsed command-line flags and argument.
+type options struct {
+	name        string
+	storefront  string // empty means "use AM_STOREFRONT or its default"
+	dryRun      bool
+	verbose     bool
+	showVersion bool
+	file        string
+}
+
+func parseFlags(args []string, stderr io.Writer) (options, error) {
+	var o options
+	// A FlagSet of our own with ContinueOnError returns errors instead of
+	// calling os.Exit(2), which would collide with our auth exit code.
+	fs := flag.NewFlagSet("am-import", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
+	fs.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
+	fs.BoolVar(&o.dryRun, "dry-run", false, "search and show matches, but create nothing")
+	fs.BoolVar(&o.verbose, "v", false, "verbose (debug) logging")
+	fs.BoolVar(&o.showVersion, "version", false, "print version and exit")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-v] <file.txt>")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return o, err
+		}
+		return o, errFlagsReported
+	}
+	if o.showVersion {
+		return o, nil
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return o, fmt.Errorf("expected exactly one input file, got %d arguments", fs.NArg())
+	}
+	o.file = fs.Arg(0)
+	if o.name == "" && !o.dryRun {
+		return o, errors.New("-name is required (or use -dry-run)")
+	}
+	return o, nil
 }
