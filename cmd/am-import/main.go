@@ -147,18 +147,18 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	// A FlagSet of our own with ContinueOnError returns errors instead of
 	// calling os.Exit(2), which would collide with our auth exit code.
 	fs := flag.NewFlagSet("am-import", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
-	fs.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
-	fs.BoolVar(&o.dryRun, "dry-run", false, "search and show matches, but create nothing")
-	fs.BoolVar(&o.verbose, "v", false, "verbose (debug) logging")
-	fs.BoolVar(&o.showVersion, "version", false, "print version and exit")
-	fs.Usage = func() {
+	fset.SetOutput(stderr)
+	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
+	fset.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
+	fset.BoolVar(&o.dryRun, "dry-run", false, "search and show matches, but create nothing")
+	fset.BoolVar(&o.verbose, "v", false, "verbose (debug) logging")
+	fset.BoolVar(&o.showVersion, "version", false, "print version and exit")
+	fset.Usage = func() {
 		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-v] <file.txt>")
-		fs.PrintDefaults()
+		fset.PrintDefaults()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fset.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return o, err
 		}
@@ -167,11 +167,11 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if o.showVersion {
 		return o, nil
 	}
-	if fs.NArg() != 1 {
-		fs.Usage()
-		return o, fmt.Errorf("expected exactly one input file, got %d arguments", fs.NArg())
+	if fset.NArg() != 1 {
+		fset.Usage()
+		return o, fmt.Errorf("expected exactly one input file, got %d arguments", fset.NArg())
 	}
-	o.file = fs.Arg(0)
+	o.file = fset.Arg(0)
 	if o.name == "" && !o.dryRun {
 		return o, errors.New("-name is required (or use -dry-run)")
 	}
