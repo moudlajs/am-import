@@ -101,7 +101,7 @@ jobs:
               - `gh pr comment` for the overall summary. You MUST post this
                 summary, and only once you have actually completed the
                 review. Its first line MUST be exactly:
-                  ## Claude review
+                  ## Claude review of ${{ github.event.pull_request.head.sha || 'comment' }}
                 A workflow step checks for that heading; without it the
                 review counts as not done. If you could not review (missing
                 files, tool errors), post a comment WITHOUT that heading
@@ -134,49 +134,57 @@ jobs:
       # The action exits green without reviewing in some cases, notably when
       # the PR changes this workflow file: it refuses to run a workflow that
       # differs from the default branch's (#17). So require the summary it
-      # was told to post, from claude[bot], during this run.
+      # was told to post, naming the exact head SHA, from claude[bot].
       - name: Verify a review was actually posted
         if: steps.draft.outputs.draft != 'true' && github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-          STARTED: ${{ steps.draft.outputs.started }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          count() {  # count PR comments whose author and first line match
+          # Count PR comments by author $1 whose first line starts with $2.
+          # Only constants and a SHA are interpolated into the jq program.
+          count() {
             gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              --jq "[.[] | select(.user.login == \"$1\" and .created_at >= \"$2\" and (.body | startswith(\"$3\")))] | length" \
+              --jq "[.[] | select(.user.login == \"$1\" and (.body | startswith(\"$2\")))] | length" \
               | awk '{s+=$1} END {print s+0}'
           }
 
-          if [ "$(count 'claude[bot]' "$STARTED" '## Claude review')" -gt 0 ]; then
-            echo "ok - review posted"; exit 0
-          fi
+          # Assigned on its own line: a failure inside `[ "$(...)" ]` would
+          # be ignored even with pipefail.
+          n="$(count 'claude[bot]' "## Claude review of $HEAD_SHA")"
+          if [ "$n" -gt 0 ]; then echo "ok - review of $HEAD_SHA posted"; exit 0; fi
 
+          # Three-dot diff: what the PR changes relative to where it forked,
+          # so later changes on the default branch don't affect a re-run.
+          # --no-renames so moving code into a .md file shows the deletion.
+          range="origin/$DEFAULT_BRANCH...$HEAD_SHA"
           wf=.github/workflows/claude-review.yml
-          if git diff --quiet "origin/$DEFAULT_BRANCH" HEAD -- "$wf"; then
-            echo "::error::No '## Claude review' comment from claude[bot] since $STARTED. The action did not complete a review; check its log."
+
+          rc=0; git diff --quiet "$range" -- "$wf" || rc=$?
+          if [ "$rc" -gt 1 ]; then echo "::error::git diff failed ($rc)"; exit 1; fi
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::No '## Claude review of $HEAD_SHA' comment from claude[bot]. The action did not complete a review of this commit; check its log."
             exit 1
           fi
 
           # This PR changes the review workflow, so the action cannot review
-          # it. Allowed only if the PR is limited to workflows and docs, and
-          # a manual independent review has been posted (CLAUDE.md).
-          other="$(git diff --name-only "origin/$DEFAULT_BRANCH" HEAD \
-                    | grep -vE '^\.github/workflows/[^/]+\.ya?ml$|\.md$' || true)"
+          # it. Allowed only if it touches nothing else but top-level docs,
+          # and a manual independent review of this exact SHA is posted.
+          files="$(git diff --name-only --no-renames "$range")"
+          other="$(printf '%s\n' "$files" | grep -vE '^\.github/workflows/claude-review\.yml$|^[^/]+\.md$' || true)"
           if [ -n "$other" ]; then
             echo "::error::This PR changes $wf, which the action cannot review, AND other files it must review:"
             echo "$other"
             echo "Split the workflow change into its own PR."
             exit 1
           fi
-          # The manual review must be newer than the head commit, so a review
-          # of an earlier version does not cover later pushes.
-          head_time="$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd "$HEAD_SHA")"
-          if [ "$(count 'moudlajs' "$head_time" '## Independent review (manual')" -eq 0 ]; then
-            echo "::error::This PR changes $wf, which the action cannot review. Post an independent review of $HEAD_SHA (heading '## Independent review (manual') per CLAUDE.md, then re-run this job."
+
+          n="$(count 'moudlajs' "## Independent review (manual - $HEAD_SHA)")"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::This PR changes $wf, which the action cannot review. Post an independent review whose first line is exactly '## Independent review (manual - $HEAD_SHA)' per CLAUDE.md, then re-run this job."
             exit 1
           fi
-          echo "::warning::Review workflow change - accepted on a manual independent review, not the action."
+          echo "::warning::Review workflow change - accepted on a manual independent review of $HEAD_SHA, not the action."
