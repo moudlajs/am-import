@@ -146,7 +146,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	var o options
 	// A FlagSet of our own with ContinueOnError returns errors instead of
 	// calling os.Exit(2), which would collide with our auth exit code.
-	fs := flag.NewFlagSet("am-import", flag.ContinueOnError)
+	fset := flag.NewFlagSet("am-import", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -dry-run)")
 	fset.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
