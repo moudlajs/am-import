@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"text/tabwriter"
+	"time"
 
 	"github.com/moudlajs/am-import/internal/applemusic"
 	"github.com/moudlajs/am-import/internal/matcher"
@@ -38,7 +39,14 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 	log.Debug("parsed input", "file", opts.file, "queries", len(queries))
 
 	results := make([]resolved, 0, len(queries))
-	for _, q := range queries {
+	for i, q := range queries {
+		// Sequential on purpose, with a pause between searches so we look
+		// like a person using the web player, not a scraper.
+		if i > 0 {
+			if err := sleep(ctx, opts.delay); err != nil {
+				return fmt.Errorf("line %d: %w", q.Line, err)
+			}
+		}
 		r, err := resolve(ctx, api, opts.storefront, q)
 		if err != nil {
 			return err
@@ -74,6 +82,22 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 	log.Info("created playlist", "name", opts.name, "id", id, "tracks", len(ids))
 	fmt.Fprintf(stdout, "Created %q with %d of %d songs.\n", opts.name, len(ids), len(results))
 	return nil
+}
+
+// sleep waits for d, or returns early with ctx's error if ctx is cancelled
+// first. time.Sleep can't be interrupted, so it would delay Ctrl-C.
+func sleep(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func readQueries(path string) ([]parser.Query, error) {
