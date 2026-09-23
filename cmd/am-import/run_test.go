@@ -260,10 +260,23 @@ func TestRunDryRunWritesNoReport(t *testing.T) {
 
 func TestRunNothingMatched(t *testing.T) {
 	f, api, path := setup(t, "Nobody - Nothing\n")
+	report := filepath.Join(filepath.Dir(path), unmatchedFile)
+	if err := os.WriteFile(report, []byte("stale from an earlier run\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	var out bytes.Buffer
 	err := run(context.Background(), options{name: "Mix", file: path}, api, &out, discardLogger())
 	if !errors.Is(err, errNothingMatched) {
 		t.Fatalf("run() error = %v, want errNothingMatched", err)
+	}
+	if !strings.Contains(err.Error(), report) {
+		t.Errorf("error %q should name the report", err)
+	}
+	// The report is refreshed with this run's lines, not left stale.
+	got, readErr := os.ReadFile(report)
+	if readErr != nil || strings.Contains(string(got), "stale") || !strings.HasSuffix(string(got), "\nNobody - Nothing\n") {
+		t.Errorf("unmatched.txt not refreshed (err %v):\n%s", readErr, got)
 	}
 	if !strings.Contains(out.String(), "line 1: Nobody - Nothing") {
 		t.Errorf("summary missing the unmatched line:\n%s", out.String())
