@@ -29,6 +29,10 @@ var errPartial = errors.New("some lines did not match")
 // unmatchedFile is written next to the input file.
 const unmatchedFile = "unmatched.txt"
 
+// errWriteInterrupted means the run was cancelled while the create or
+// append request was in flight, so Apple may or may not have applied it.
+var errWriteInterrupted = errors.New("interrupted while writing the playlist; check your library, the change may have been applied")
+
 // errNoSongs means the input file had no song lines at all.
 var errNoSongs = errors.New("no songs found (only blank lines or comments?)")
 
@@ -83,6 +87,7 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 		if err := printTable(stdout, results); err != nil {
 			return err
 		}
+		fmt.Fprintln(stdout)
 		printSummary(stdout, len(ids), unmatched, skipped, "")
 		return partial(unmatched, "")
 	}
@@ -103,7 +108,7 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 	printSummary(stdout, len(ids), unmatched, skipped, reportPath)
 	if opts.playlistID != "" {
 		if err := api.AddTracks(ctx, opts.playlistID, ids); err != nil {
-			return fmt.Errorf("add to playlist %s: %w", opts.playlistID, err)
+			return writeErr(fmt.Errorf("add to playlist %s: %w", opts.playlistID, err))
 		}
 		log.Info("added to playlist", "id", opts.playlistID, "tracks", len(ids))
 		fmt.Fprintf(stdout, "Added %d songs to playlist %s.\n", len(ids), opts.playlistID)
@@ -112,11 +117,21 @@ func run(ctx context.Context, opts options, api *applemusic.Client, stdout io.Wr
 
 	id, err := api.CreatePlaylist(ctx, opts.name, ids)
 	if err != nil {
-		return fmt.Errorf("create playlist %q: %w", opts.name, err)
+		return writeErr(fmt.Errorf("create playlist %q: %w", opts.name, err))
 	}
 	log.Info("created playlist", "name", opts.name, "id", id, "tracks", len(ids))
 	fmt.Fprintf(stdout, "Created %q with %d songs.\n", opts.name, len(ids))
 	return partial(unmatched, reportPath)
+}
+
+// writeErr marks a cancellation during the create/append request, where
+// the outcome on Apple's side is unknown, so it isn't reported as "nothing
+// was changed".
+func writeErr(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%w: %w", errWriteInterrupted, err)
+	}
+	return err
 }
 
 // partial returns errPartial, with the count and report location, when

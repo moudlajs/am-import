@@ -34,7 +34,7 @@ jobs:
         run: go vet ./...
 
       - name: go test
-        run: go test ./... -race -coverprofile=coverage.out
+        run: go test ./... -race -timeout 2m -coverprofile=coverage.out
 
       - name: go build
         run: go build ./...
