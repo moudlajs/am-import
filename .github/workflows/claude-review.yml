@@ -102,13 +102,13 @@ jobs:
           # metered API key.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-          # Without these the review runs and then has no permission to post
-          # anything; the log says "No buffered inline comments".
           # No "Generated with Claude Code" footer or co-author trailer on
           # anything the reviewer writes. The verify step enforces it too.
           settings: |
             {"attribution": {"commit": "", "pr": ""}, "includeGitInstructions": false}
 
+          # Without these the review runs and then has no permission to post
+          # anything; the log says "No buffered inline comments".
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(go test:*),Bash(go vet:*),Bash(go build:*)"
 
@@ -163,6 +163,10 @@ jobs:
       # the PR changes this workflow file: it refuses to run a workflow that
       # differs from the default branch's (#17). So require the summary it
       # was told to post, naming the exact head SHA, from claude[bot].
+      #
+      # pull_request runs only: they are what produce the required check.
+      # @claude comment runs are ad hoc and not gated; their footer is
+      # suppressed by the settings above, not verified here.
       - name: Verify a review was actually posted
         if: steps.draft.outputs.draft != 'true' && github.event_name == 'pull_request'
         env:
@@ -187,7 +191,7 @@ jobs:
             # Same filter, restricted to summaries that carry an attribution
             # footer, which the maintainer does not want on the PR.
             footer="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              --jq "[.[] | select(.user.login == \"claude[bot]\" and (.body | startswith(\"## Claude review of $HEAD_SHA\")) and (.body | test(\"(?m)^[^A-Za-z]*Generated with .?Claude Code|(?m)^Co-Authored-By:\"; \"i\")))] | length" \
+              --jq "[.[] | select(.user.login == \"claude[bot]\" and (.body | startswith(\"## Claude review of $HEAD_SHA\")) and (.body | test(\"(?m)^[^A-Za-z]*Generated with .?Claude Code.?([(][^ )]*[)])?[^A-Za-z0-9]*$|(?m)^Co-Authored-By:\"; \"i\")))] | length" \
               | awk '{s+=$1} END {print s+0}')"
             if [ "$footer" -gt 0 ]; then
               echo "::error::The review summary contains an attribution footer line. The prompt and settings forbid it; check the action's configuration. To recover, delete that bot comment and re-run this job, or push a new commit."
