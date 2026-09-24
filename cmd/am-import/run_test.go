@@ -593,7 +593,7 @@ func TestCLIInterrupted(t *testing.T) {
 	if code != exitError {
 		t.Errorf("exit code = %d, want %d", code, exitError)
 	}
-	if !strings.Contains(errOut.String(), "no playlist was created") {
+	if !strings.Contains(errOut.String(), "Interrupted before writing") {
 		t.Errorf("stderr = %q, want the interrupted message", errOut.String())
 	}
 }
@@ -616,5 +616,38 @@ func TestRunAppendsInsteadOfCreating(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Added 2 songs to playlist p.existing") {
 		t.Errorf("output:\n%s", out.String())
+	}
+}
+
+// Ctrl-C while the create request is in flight: Apple may have applied it,
+// so the error must not claim nothing changed.
+func TestRunInterruptedDuringCreate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fakeAPI{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// The server only notices a dropped connection once the body
+			// has been read, so read it first.
+			_, _ = io.Copy(io.Discard, r.Body)
+			cancel() // Ctrl-C mid-request; the client sees context.Canceled
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second): // never hang the suite
+			}
+			return
+		}
+		f.handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	api := applemusic.New(srv.Client(), srv.URL, "fake-dev", "fake-user")
+	path := filepath.Join(t.TempDir(), "songs.txt")
+	if err := os.WriteFile(path, []byte("Portishead - Glory Box\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := run(ctx, options{name: "Mix", file: path}, api, io.Discard, discardLogger())
+	if !errors.Is(err, errWriteInterrupted) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() error = %v, want errWriteInterrupted wrapping context.Canceled", err)
 	}
 }

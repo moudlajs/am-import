@@ -8,7 +8,7 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/am-import ./cmd/am-import
 
 test:
-	go test ./... -race -coverprofile=coverage.out
+	go test ./... -race -timeout 2m -coverprofile=coverage.out
 
 lint:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }

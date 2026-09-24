@@ -97,7 +97,7 @@ internal/applemusic     HTTP client: Search, CreatePlaylist, AddTracks
 ```sh
 make fmt           # gofmt -w
 make lint          # gofmt check, go vet, golangci-lint
-make test          # go test ./... -race -coverprofile=coverage.out
+make test          # go test ./... -race -timeout 2m -coverprofile=coverage.out
 make build         # bin/am-import with version from git describe
 ```
 
