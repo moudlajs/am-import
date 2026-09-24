@@ -14,14 +14,14 @@ assignees: moudlajs
 **Command and exit code**
 
 ```
-$ am-import -v ...
+$ bootleg -v ...
 exit code:
 ```
 
 **Version**
 
 ```
-$ am-import -version
+$ bootleg -version
 ```
 
 **Input line(s) that misbehaved**

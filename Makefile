@@ -5,7 +5,7 @@ LDFLAGS := -X main.version=$(VERSION)
 .PHONY: build test lint fmt check
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o bin/am-import ./cmd/am-import
+	go build -ldflags "$(LDFLAGS)" -o bin/bootleg ./cmd/bootleg
 
 test:
 	go test ./... -race -timeout 2m -coverprofile=coverage.out

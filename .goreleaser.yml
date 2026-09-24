@@ -1,10 +1,10 @@
 version: 2
 
-project_name: am-import
+project_name: bootleg
 
 builds:
-  - main: ./cmd/am-import
-    binary: am-import
+  - main: ./cmd/bootleg
+    binary: bootleg
     env:
       - CGO_ENABLED=0
     goos: [darwin, linux]

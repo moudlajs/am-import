@@ -1,4 +1,4 @@
-module github.com/moudlajs/am-import
+module github.com/moudlajs/bootleg
 
 go 1.24.0
 
