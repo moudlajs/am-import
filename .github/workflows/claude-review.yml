@@ -191,7 +191,7 @@ jobs:
             # Same filter, restricted to summaries that carry an attribution
             # footer, which the maintainer does not want on the PR.
             footer="$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              --jq "[.[] | select(.user.login == \"claude[bot]\" and (.body | startswith(\"## Claude review of $HEAD_SHA\")) and (.body | test(\"(?m)^[^A-Za-z]*Generated with .?Claude Code.?([(][^ )]*[)])? *$|(?m)^Co-Authored-By:\"; \"i\")))] | length" \
+              --jq "[.[] | select(.user.login == \"claude[bot]\" and (.body | startswith(\"## Claude review of $HEAD_SHA\")) and (.body | test(\"(?m)^[^A-Za-z]*Generated with .?Claude Code.?([(][^ )]*[)])?[^A-Za-z0-9]*$|(?m)^Co-Authored-By:\"; \"i\")))] | length" \
               | awk '{s+=$1} END {print s+0}')"
             if [ "$footer" -gt 0 ]; then
               echo "::error::The review summary contains an attribution footer line. The prompt and settings forbid it; check the action's configuration. To recover, delete that bot comment and re-run this job, or push a new commit."
