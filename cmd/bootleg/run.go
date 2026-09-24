@@ -13,9 +13,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/moudlajs/am-import/internal/applemusic"
-	"github.com/moudlajs/am-import/internal/matcher"
-	"github.com/moudlajs/am-import/internal/parser"
+	"github.com/moudlajs/bootleg/internal/applemusic"
+	"github.com/moudlajs/bootleg/internal/matcher"
+	"github.com/moudlajs/bootleg/internal/parser"
 )
 
 // errNothingMatched means no line produced a usable match, so there is
@@ -191,8 +191,8 @@ func writeUnmatched(input string, unmatched []parser.Query, log *slog.Logger) st
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# am-import: no match found for these lines of %s.\n", filepath.Base(input))
-	b.WriteString("# Fix them (e.g. \"Artist - Title\") and run am-import on this file.\n")
+	fmt.Fprintf(&b, "# bootleg: no match found for these lines of %s.\n", filepath.Base(input))
+	b.WriteString("# Fix them (e.g. \"Artist - Title\") and run bootleg on this file.\n")
 	for _, q := range unmatched {
 		b.WriteString(q.Raw + "\n")
 	}

@@ -1,9 +1,17 @@
-# am-import
+# bootleg
 
-[![CI](https://github.com/moudlajs/am-import/actions/workflows/ci.yml/badge.svg)](https://github.com/moudlajs/am-import/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/moudlajs/am-import)](https://github.com/moudlajs/am-import/releases)
+[![CI](https://github.com/moudlajs/bootleg/actions/workflows/ci.yml/badge.svg)](https://github.com/moudlajs/bootleg/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/moudlajs/bootleg)](https://github.com/moudlajs/bootleg/releases)
 
-Turn a plain text file of songs into an Apple Music library playlist.
+Turn a plain text file of songs into an Apple Music library playlist,
+through the web player's back door.
+
+A bootleg is music that didn't come through the label's official channels.
+This gets music into your library without Apple's official channel: no
+MusicKit, no paid developer account, just the tokens your browser already has.
+
+> Formerly `am-import`. The old repo URL redirects here, and v0.1.0 remains
+> installable under the old module path.
 
 ```text
 # road trip
@@ -17,7 +25,7 @@ The Nonexistents - Imaginary Song
 saved as `roadtrip.txt`, then:
 
 ```sh
-am-import -name "Road trip" roadtrip.txt
+bootleg -name "Road trip" roadtrip.txt
 ```
 
 It searches the Apple Music catalog for each line, picks the best match (the
@@ -29,7 +37,7 @@ fix them and run again.
 
 The official route (MusicKit) needs a paid Apple Developer membership to mint a
 developer token. The Apple Music web player at music.apple.com already has one,
-and it has your user token while you are signed in. `am-import` reuses those two
+and it has your user token while you are signed in. `bootleg` reuses those two
 tokens and calls the same endpoints the web player calls. You supply the
 tokens; the tool never logs in, scrapes or obtains them itself.
 
@@ -40,6 +48,8 @@ tokens; the tool never logs in, scrapes or obtains them itself.
 - It is meant for **personal use with your own account**. Don't use it to
   automate anyone else's library, and don't hammer the API: searches are
   deliberately sequential with a pause between them.
+- Despite the name, it doesn't download, copy or share any music. It only
+  adds catalog songs you can already stream to your own library.
 - Not affiliated with or endorsed by Apple.
 
 ## Install
@@ -47,17 +57,17 @@ tokens; the tool never logs in, scrapes or obtains them itself.
 With Go 1.24 or newer:
 
 ```sh
-go install github.com/moudlajs/am-import/cmd/am-import@latest
+go install github.com/moudlajs/bootleg/cmd/bootleg@latest
 ```
 
 Or download a binary for macOS or Linux (amd64/arm64) from
-[Releases](https://github.com/moudlajs/am-import/releases), and check it
+[Releases](https://github.com/moudlajs/bootleg/releases), and check it
 against `checksums.txt`:
 
 ```sh
 shasum -a 256 -c checksums.txt --ignore-missing
-tar -xzf am-import_*_darwin_arm64.tar.gz
-./am-import -version
+tar -xzf bootleg_*_darwin_arm64.tar.gz
+./bootleg -version
 ```
 
 ## Token setup
@@ -76,7 +86,7 @@ You need two values from the web player. Both go in environment variables.
    | `authorization` | `AM_DEV_TOKEN` | Drop the `Bearer ` prefix (it's accepted either way). Lasts months. |
    | `media-user-token` | `AM_USER_TOKEN` | Tied to your session. This is the one that expires. |
 
-5. Put them in a `.env` file in the directory you run `am-import` from:
+5. Put them in a `.env` file in the directory you run `bootleg` from:
 
    ```sh
    cp .env.example .env   # then paste the two values in
@@ -88,15 +98,15 @@ You need two values from the web player. Both go in environment variables.
 It defaults to `us`; `-storefront` overrides it.
 
 The tokens give access to your Apple Music library, so treat them like a
-password. `.env` is gitignored, and `am-import` never prints or logs them.
+password. `.env` is gitignored, and `bootleg` never prints or logs them.
 
-**When `am-import` exits with code 2**, Apple rejected the tokens. Repeat the
+**When `bootleg` exits with code 2**, Apple rejected the tokens. Repeat the
 steps above; usually only `AM_USER_TOKEN` needs replacing.
 
 ## Usage
 
 ```text
-am-import -name "Playlist name" [-storefront cz] [-dry-run] [-playlist-id ID] [-delay 500ms] [-v] <file.txt>
+bootleg -name "Playlist name" [-storefront cz] [-dry-run] [-playlist-id ID] [-delay 500ms] [-v] <file.txt>
 ```
 
 | Flag | Meaning |
@@ -128,7 +138,7 @@ the artist and the title to match.
 Check the matches first:
 
 ```console
-$ am-import -dry-run roadtrip.txt
+$ bootleg -dry-run roadtrip.txt
 LINE  QUERY                              MATCH                      ID
 2     Björk - Army of Me                 Björk - Army of Me         1440833098
 3     Portishead - Glory Box             Portishead - Glory Box     1440764786
@@ -144,7 +154,7 @@ Unmatched:
 Create the playlist:
 
 ```console
-$ am-import -name "Road trip" roadtrip.txt
+$ bootleg -name "Road trip" roadtrip.txt
 Matched 4, unmatched 1, skipped 1 (blank or comment).
 Unmatched:
   line 6: The Nonexistents - Imaginary Song
@@ -157,18 +167,18 @@ the last part of the playlist's URL in the web player,
 `music.apple.com/library/playlist/p.XXXXXXX`:
 
 ```sh
-am-import -playlist-id p.XXXXXXX unmatched.txt
+bootleg -playlist-id p.XXXXXXX unmatched.txt
 ```
 
 Slow down, and see every search and match:
 
 ```sh
-am-import -v -delay 2s -name "Big list" big.txt
+bootleg -v -delay 2s -name "Big list" big.txt
 ```
 
 Press <kbd>Ctrl</kbd>+<kbd>C</kbd> at any point to stop. If you stop during
 the searches, nothing is created or changed. If you stop during the final
-create or append request, Apple may already have applied it; `am-import` says
+create or append request, Apple may already have applied it; `bootleg` says
 so, and you should check your library.
 
 ## Exit codes

@@ -1,4 +1,4 @@
-// Command am-import creates an Apple Music library playlist from a text file
+// Command bootleg creates an Apple Music library playlist from a text file
 // of "Artist - Title" lines, using the web player's tokens.
 package main
 
@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/moudlajs/am-import/internal/applemusic"
-	"github.com/moudlajs/am-import/internal/config"
+	"github.com/moudlajs/bootleg/internal/applemusic"
+	"github.com/moudlajs/bootleg/internal/config"
 )
 
 // version is overwritten at build time with -ldflags "-X main.version=...".
@@ -74,7 +74,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL s
 		return exitInput // the flag package already printed the error and usage
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "am-import: %v\n", err)
+		fmt.Fprintf(stderr, "bootleg: %v\n", err)
 		return exitInput
 	}
 	if opts.showVersion {
@@ -89,7 +89,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL s
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
 
 	if err := config.LoadDotEnv(".env"); err != nil {
-		fmt.Fprintf(stderr, "am-import: %v\n", err)
+		fmt.Fprintf(stderr, "bootleg: %v\n", err)
 		return exitInput
 	}
 	cfg, err := config.FromEnv()
@@ -112,7 +112,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL s
 // report prints err, plus advice for the errors a user can act on, and
 // returns the matching exit code.
 func report(stderr io.Writer, err error) int {
-	fmt.Fprintf(stderr, "am-import: %v\n", err)
+	fmt.Fprintf(stderr, "bootleg: %v\n", err)
 	code := exitCode(err)
 	switch {
 	case errors.Is(err, applemusic.ErrUnauthorized):
@@ -180,7 +180,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	var o options
 	// A FlagSet of our own with ContinueOnError returns errors instead of
 	// calling os.Exit(2), which would collide with our auth exit code.
-	fset := flag.NewFlagSet("am-import", flag.ContinueOnError)
+	fset := flag.NewFlagSet("bootleg", flag.ContinueOnError)
 	fset.SetOutput(stderr)
 	fset.StringVar(&o.name, "name", "", "name of the playlist to create (required unless -playlist-id or -dry-run)")
 	fset.StringVar(&o.storefront, "storefront", "", "catalog storefront, e.g. cz or us (default $AM_STOREFRONT or us)")
@@ -190,7 +190,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fset.BoolVar(&o.verbose, "v", false, "verbose (debug) logging")
 	fset.BoolVar(&o.showVersion, "version", false, "print version and exit")
 	fset.Usage = func() {
-		fmt.Fprintln(stderr, "usage: am-import -name \"Playlist name\" [-storefront cz] [-dry-run] [-playlist-id ID] [-delay 500ms] [-v] <file.txt>")
+		fmt.Fprintln(stderr, "usage: bootleg -name \"Playlist name\" [-storefront cz] [-dry-run] [-playlist-id ID] [-delay 500ms] [-v] <file.txt>")
 		fset.PrintDefaults()
 	}
 

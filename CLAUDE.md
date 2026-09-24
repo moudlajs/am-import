@@ -5,7 +5,7 @@ to you too, and it is how this repo guarantees quality.
 
 ## What this repository is
 
-`am-import`: a Go CLI that reads `Artist - Title` lines from a text file and
+`bootleg`: a Go CLI that reads `Artist - Title` lines from a text file and
 creates an Apple Music library playlist. It uses the Apple Music web player's
 tokens and private `amp-api.music.apple.com` endpoints, not MusicKit, so no
 paid developer account is needed. The user supplies the tokens.
@@ -33,7 +33,7 @@ idiomatic, boring Go, and explain non-obvious idioms in a short comment.
 ## Architecture
 
 ```
-cmd/am-import/main.go   flags, signal.NotifyContext, build deps, call run(), map error → exit code
+cmd/bootleg/main.go   flags, signal.NotifyContext, build deps, call run(), map error → exit code
 internal/config         env vars + tiny .env loader (only fills unset vars)
 internal/parser         input file → []Query{Artist, Title, Raw}
 internal/matcher        PURE: normalise, reject karaoke/tribute, score, pick best
@@ -98,7 +98,7 @@ internal/applemusic     HTTP client: Search, CreatePlaylist, AddTracks
 make fmt           # gofmt -w
 make lint          # gofmt check, go vet, golangci-lint
 make test          # go test ./... -race -timeout 2m -coverprofile=coverage.out
-make build         # bin/am-import with version from git describe
+make build         # bin/bootleg with version from git describe
 ```
 
 ## Pull requests
@@ -114,7 +114,7 @@ gh pr ready <n>    # fires the independent Claude review
 Answer every review thread, then resolve it:
 
 ```sh
-gh api graphql -f query='{ repository(owner:"moudlajs", name:"am-import") {
+gh api graphql -f query='{ repository(owner:"moudlajs", name:"bootleg") {
   pullRequest(number:N) { reviewThreads(first:50) {
     nodes { id isResolved path line comments(first:1){nodes{body}} } } } } }'
 gh api graphql -f query='mutation { addPullRequestReviewThreadReply(

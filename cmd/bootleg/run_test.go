@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moudlajs/am-import/internal/applemusic"
+	"github.com/moudlajs/bootleg/internal/applemusic"
 )
 
 // fakeAPI is an httptest server that answers search by term and records
