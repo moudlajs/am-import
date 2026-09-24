@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -649,5 +650,33 @@ func TestRunInterruptedDuringCreate(t *testing.T) {
 	err := run(ctx, options{name: "Mix", file: path}, api, io.Discard, discardLogger())
 	if !errors.Is(err, errWriteInterrupted) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("run() error = %v, want errWriteInterrupted wrapping context.Canceled", err)
+	}
+}
+
+func TestResolveVersion(t *testing.T) {
+	info := func(v string) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{Main: debug.Module{Version: v}}, true
+		}
+	}
+	noInfo := func() (*debug.BuildInfo, bool) { return nil, false }
+
+	tests := []struct {
+		name    string
+		ldflags string
+		read    func() (*debug.BuildInfo, bool)
+		want    string
+	}{
+		{"release build (ldflags win)", "0.1.0", info("v0.1.0"), "0.1.0"},
+		{"go install @version", "dev", info("v0.1.0"), "v0.1.0"},
+		{"go build in a checkout", "dev", info("(devel)"), "dev"},
+		{"no build info", "dev", noInfo, "dev"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveVersion(tt.ldflags, tt.read); got != tt.want {
+				t.Errorf("resolveVersion() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

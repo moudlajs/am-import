@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -77,7 +78,7 @@ func cli(ctx context.Context, args []string, stdout, stderr io.Writer, baseURL s
 		return exitInput
 	}
 	if opts.showVersion {
-		fmt.Fprintln(stdout, version)
+		fmt.Fprintln(stdout, resolveVersion(version, debug.ReadBuildInfo))
 		return exitOK
 	}
 
@@ -142,6 +143,21 @@ func exitCode(err error) int {
 	default:
 		return exitError
 	}
+}
+
+// resolveVersion returns the -ldflags version for release builds. For
+// `go install ...@v1.2.3`, which can't set ldflags, it falls back to the
+// module version Go records in the binary. readBuildInfo is a parameter
+// (normally debug.ReadBuildInfo) so tests can supply their own.
+func resolveVersion(ldflags string, readBuildInfo func() (*debug.BuildInfo, bool)) string {
+	if ldflags != "dev" {
+		return ldflags
+	}
+	// "(devel)" is what a plain `go build` in a checkout records.
+	if info, ok := readBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return ldflags
 }
 
 // errFlagsReported means flag parsing failed and the flag package has
