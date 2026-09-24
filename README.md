@@ -6,7 +6,7 @@
 Turn a plain text file of songs into an Apple Music library playlist.
 
 ```text
-# road trip.txt
+# roadtrip.txt
 Björk - Army of Me
 Portishead - Glory Box
 Massive Attack - Teardrop
@@ -14,7 +14,7 @@ Sigur Ros - Hoppipolla
 ```
 
 ```sh
-am-import -name "Road trip" "road trip.txt"
+am-import -name "Road trip" roadtrip.txt
 ```
 
 It searches the Apple Music catalog for each line, picks the best match (the
