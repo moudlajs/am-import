@@ -6,12 +6,15 @@
 Turn a plain text file of songs into an Apple Music library playlist.
 
 ```text
-# roadtrip.txt
+# road trip
 Björk - Army of Me
 Portishead - Glory Box
 Massive Attack - Teardrop
 Sigur Ros - Hoppipolla
+The Nonexistents - Imaginary Song
 ```
+
+saved as `roadtrip.txt`, then:
 
 ```sh
 am-import -name "Road trip" roadtrip.txt
